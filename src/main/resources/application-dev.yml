@@ -1,0 +1,35 @@
+telechat:
+  #--------------------------------
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    host: localhost
+    port: 3306
+    database: telechat
+    username: root
+    password: 123456
+  #--------------------------------
+  alioss:
+    endpoint: oss-cn-hangzhou.aliyuncs.com
+    access-key-id: LTAI5tK6WhNQ4WMnzcMmJDod
+    access-key-secret: cwQHdOAJEoQ3xMQFKCbSznOKfVBvKi
+    bucket-name: nabelese-telechat
+    max-avatar-size: 10485760
+  #--------------------------------
+  redis:
+    host: localhost
+    port: 6379
+    database: 10
+  #--------------------------------
+  jwt:
+    secret: nabelese-telechat-jwt-secret-super-save-secret-2553758435123456789123456789
+    expiration: 2592000000
+  #--------------------------------
+
+
+spring:
+  #--------------------------------
+  mail:
+    host: smtp.163.com
+    username: wjj20050528@163.com
+    password: DDyfjxvSi73qsVBf
+    from: wjj20050528@163.com

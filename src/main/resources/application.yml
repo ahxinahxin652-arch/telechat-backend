@@ -1,0 +1,86 @@
+server:
+  port: 8888
+
+spring:
+  #--------------------------------
+  profiles:
+    active: dev
+  #--------------------------------
+  main:
+    allow-circular-references: true
+  #--------------------------------
+  datasource:
+    druid:
+      driver-class-name: ${telechat.datasource.driver-class-name}
+      url: jdbc:mysql://${telechat.datasource.host}:${telechat.datasource.port}/${telechat.datasource.database}?serverTimezone=Asia/Shanghai&useUnicode=true&characterEncoding=utf-8&zeroDateTimeBehavior=convertToNull&useSSL=false&allowPublicKeyRetrieval=true
+      username: ${telechat.datasource.username}
+      password: ${telechat.datasource.password}
+  #--------------------------------
+  data:
+    redis:
+      host: ${telechat.redis.host}
+      port: ${telechat.redis.port}
+      database: ${telechat.redis.database}
+  #--------------------------------
+  mail:
+    host: ${telechat.mail.host}
+    port: 465
+    username: ${telechat.mail.username}
+    password: ${telechat.mail.password}
+    from: ${telechat.mail.from}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          ssl:
+            enable: true  # 用于 465 端口
+  #---------------------------------
+  mvc:
+    pathmatch:
+      matching-strategy: ant_path_matcher
+  #---------------------------------
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
+
+
+mybatis:
+  #mapper配置文件
+  mapper-locations: classpath:mapper/*.xml
+  type-aliases-package: com.telechat.pojo.entity
+  configuration:
+    #开启驼峰命名
+    map-underscore-to-camel-case: true
+
+
+#开启日志
+logging:
+  level:
+    com:
+      telechat:
+        mapper: debug
+        service: info
+        controller: info
+
+
+knife4j:
+  enable: true
+  production: false
+
+
+telechat:
+  alioss:
+    endpoint: ${telechat.alioss.endpoint}
+    access-key-id: ${telechat.alioss.access-key-id}
+    access-key-secret: ${telechat.alioss.access-key-secret}
+    bucket-name: ${telechat.alioss.bucket-name}
+
+  wechat:
+    appid: ${telechat.wechat.appid}
+    secret: ${telechat.wechat.secret}
+
+  jwt:
+    secret: ${telechat.jwt.secret}
+    expiration: ${telechat.jwt.expiration}
+
