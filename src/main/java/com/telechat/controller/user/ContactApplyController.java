@@ -21,7 +21,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/contactApply")
-@Tag(name = "联系申请接口")
+@Tag(name = "联系申请接口1")
 @Slf4j
 public class ContactApplyController {
 
