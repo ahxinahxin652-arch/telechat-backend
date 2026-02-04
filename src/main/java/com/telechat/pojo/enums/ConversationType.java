@@ -1,22 +1,27 @@
 package com.telechat.pojo.enums;
 
-import lombok.Data;
+import com.baomidou.mybatisplus.annotation.EnumValue;
+import com.fasterxml.jackson.annotation.JsonValue;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
 
-
+@Getter
+@AllArgsConstructor
 public enum ConversationType {
-    PRIVATE(1,"PRIVATE"),
-    GROUP(2,"GROUP"),
-    CHANNEL(3,"CHANNEL");
+    PRIVATE(0,"PRIVATE"),
+    GROUP(1,"GROUP"),
+    CHANNEL(2,"CHANNEL");
 
-    private int code;
-    private String name;
+    @EnumValue
+    @JsonValue
+    private final int code;
 
-    ConversationType(int code, String name) {
-    }
-    public static String getName(int code) {
+    private final String desc;
+
+    public static String getDesc(int code) {
         for (ConversationType value : ConversationType.values()) {
             if (value.code == code) {
-                return value.name;
+                return value.desc;
             }
         }
         return null;

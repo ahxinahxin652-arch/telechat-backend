@@ -5,6 +5,9 @@ import com.telechat.pojo.entity.User;
 import jakarta.validation.Valid;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.util.Collection;
+import java.util.Set;
+
 public interface UserService {
     /**
      * 根据用户ID获取用户信息
@@ -38,4 +41,10 @@ public interface UserService {
      * @return 用户ID
      */
     Long getUserIdByUsername(String username);
+
+
+    /**
+     * 根据Id集合一次性获取所有用户信息
+    * */
+    Collection<User> getUserListByIds(Set<Long> senderIds);
 }

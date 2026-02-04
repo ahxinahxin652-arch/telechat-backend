@@ -70,6 +70,7 @@ public class ExceptionConstant {
     public static final Integer NOT_ALLOWED_CODE = 403;
     public static final String NOT_ALLOWED_MSG = "未允许";
     public static final String CONTACT_NOT_ALLOWED_MSG = "不允许操作该联系申请";
+    public static final String NOT_ALLOWED_SEND_APPLY_MYSELF = "不允许添加自己为好友";
 
 
     /**

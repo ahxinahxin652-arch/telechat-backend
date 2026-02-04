@@ -18,6 +18,10 @@ import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.util.Collection;
+import java.util.List;
+import java.util.Set;
+
 @Service
 @Slf4j
 public class UserServiceImpl implements UserService {
@@ -87,5 +91,11 @@ public class UserServiceImpl implements UserService {
             return null;
         }
         return user.getId();
+    }
+
+
+    @Override
+    public Collection<User> getUserListByIds(Set<Long> senderIds) {
+        return userDao.selectBatchIds(senderIds);
     }
 }

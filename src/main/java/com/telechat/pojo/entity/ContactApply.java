@@ -8,6 +8,7 @@ package com.telechat.pojo.entity;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.telechat.pojo.enums.ContactApplyStatus;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -26,6 +27,6 @@ public class ContactApply {
     private Long id;
     private Long userId;
     private Long friendId;
-    private String status;
+    private ContactApplyStatus status;
     private LocalDateTime createdTime;
 }

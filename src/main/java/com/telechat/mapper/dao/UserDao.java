@@ -11,8 +11,13 @@ import com.telechat.mapper.UserMapper;
 import com.telechat.pojo.entity.User;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import org.springframework.stereotype.Repository;
 
-@Component
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+
+@Repository
 public class UserDao {
     @Autowired
     private UserMapper userMapper;
@@ -35,6 +40,21 @@ public class UserDao {
      */
     public User selectById(Long userId) {
         return userMapper.selectById(userId);
+    }
+
+    /**
+     * 根据ID集合批量查询用户
+     * 对应 SQL: SELECT * FROM user WHERE id IN (1, 2, 3...)
+     *
+     * @param userIds 用户ID集合
+     * @return 用户列表
+     */
+    public List<User> selectBatchIds(Collection<Long> userIds) {
+        // 判空处理，防止传入空集合导致 MybatisPlus 报错或无效查询
+        if (userIds == null || userIds.isEmpty()) {
+            return Collections.emptyList();
+        }
+        return userMapper.selectBatchIds(userIds);
     }
 
     /**

@@ -19,16 +19,17 @@ import com.telechat.pojo.entity.ConversationMember;
 import com.telechat.pojo.entity.User;
 import com.telechat.pojo.vo.ContactVO;
 import com.telechat.service.ContactService;
+import com.telechat.util.RedisTemplateUtil;
 import jakarta.annotation.Resource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 // TODO 添加Redis缓存，并注意解决缓存穿透、缓存雪崩、缓存击穿等问题
 @Service
@@ -46,6 +47,9 @@ public class ContactServiceImpl implements ContactService {
     @Resource
     private RedisTemplate<String, Object> redisTemplate;
 
+    @Resource
+    private RedisTemplateUtil redisTemplateUtil;
+
     /**
      * 获取联系人列表
      *
@@ -54,75 +58,40 @@ public class ContactServiceImpl implements ContactService {
      */
     @Override
     public List<ContactVO> list(Long userId) {
-        // 1. 从Redis中获取该用户的联系人缓存信息
-        List<ContactsCache> contactsCachesFromRedis = (List<ContactsCache>) redisTemplate.opsForValue().get(RedisConstant.USER_CONTACTS_INFO + userId);
+        // 1. 获取好友关系列表 (从 Redis，仅包含 IDs)
+        List<ContactsCache> relationCaches = redisTemplateUtil.getContactCache(userId);
 
-        // 2. 获取缓存信息不为null且不为""
-        if(contactsCachesFromRedis != null){
-            if(!contactsCachesFromRedis.isEmpty()){
-                // 缓存命中，将缓存信息转换为ContactVO
-                List<ContactVO> contactVOS = new ArrayList<>();
-                // TODO 联系人列表的用户信息批量加载
-                contactsCachesFromRedis.forEach(contactsCache -> {
-                    ContactVO contactVO = ContactVO.builder()
-                            .id(contactsCache.getContactId())
-                            .userId(contactsCache.getFriendId())
-                            .remark(contactsCache.getRemark())
-                            .build();
-
-                    // 获取用户信息(函数已包含Redis缓存，数据库逻辑)
-                    User user = this.getUserInfo(contactsCache.getFriendId());
-                    contactVO.setUsername(user.getUsername());
-                    contactVO.setNickname(user.getNickname());
-                    contactVO.setAvatar(user.getAvatar());
-                    contactVOS.add(contactVO);
-                });
-                return contactVOS;
-            }
-            // 缓存命中空列表，返回空列表
-            else{
-                return new ArrayList<>();
-            }
+        if (relationCaches.isEmpty()) {
+            return Collections.emptyList();
         }
 
-        // 3. 缓存未命中，从数据库中查询
-        List<Contact> contacts = contactDao.list(userId);
+        // 2. 提取所有好友 ID
+        Set<Long> friendIds = relationCaches.stream()
+                .map(ContactsCache::getFriendId)
+                .collect(Collectors.toSet());
 
-        // 4. 如果联系人列表为空，redis存入Collections.emptyList() 30分钟（防止缓存穿透）
-        if (contacts == null || contacts.isEmpty()) {
-            redisTemplate.opsForValue().
-                    set(RedisConstant.USER_CONTACTS_INFO + userId, Collections.emptyList(), RedisConstant.USER_CONTACTS_INFO_DURATION, TimeUnit.MINUTES);
-            return new ArrayList<>();
-        }
-        // 5. 初始化 List<ContactVO>，List<ContactsCache>
-        List<ContactVO> contactVOS = new ArrayList<>();
-        List<ContactsCache> contactsCaches = new ArrayList<>();
-        // TODO 联系人列表的用户信息批量加载
-        contacts.forEach(contact -> {
-            ContactVO contactVO = ContactVO.builder()
-                    .id(contact.getId())
-                    .userId(contact.getFriendId())
-                    .remark(contact.getRemark())
+        // 3. 【核心】批量获取好友的详细信息 (UserInfoCache)
+        // 这一步利用了 Redis 的 MultiGet，速度极快
+        Map<Long, UserInfoCache> userInfoMap = redisTemplateUtil.getUserInfoCacheMapByIds(friendIds);
+
+        // 4. 组装最终 VO
+        return relationCaches.stream().map(relation -> {
+            UserInfoCache info = userInfoMap.get(relation.getFriendId());
+
+            // 处理 info 可能为 null 的情况（例如用户注销了，或者数据库脏数据）
+            String nickname = (info != null) ? info.getNickname() : "未知用户";
+            String avatar = (info != null) ? info.getAvatar() : null;
+            String username = (info != null) ? info.getUsername() : null;
+
+            return ContactVO.builder()
+                    .id(relation.getContactId())
+                    .userId(relation.getFriendId())
+                    .remark(relation.getRemark()) // 备注来自关系缓存
+                    .nickname(nickname)           // 昵称来自实体缓存
+                    .username(username)
+                    .avatar(avatar)
                     .build();
-
-            ContactsCache contactsCache = ContactsCache.builder()
-                    .contactId(contact.getId())
-                    .friendId(contact.getFriendId())
-                    .remark(contact.getRemark())
-                    .build();
-
-            // 获取用户信息(函数已包含Redis缓存，数据库逻辑)
-            User user = this.getUserInfo(contact.getFriendId());
-            contactVO.setUsername(user.getUsername());
-            contactVO.setNickname(user.getNickname());
-            contactVO.setAvatar(user.getAvatar());
-
-            contactVOS.add(contactVO);
-            contactsCaches.add(contactsCache);
-        });
-        // 6. 缓存联系人列表信息
-        redisTemplate.opsForValue().set(RedisConstant.USER_CONTACTS_INFO + userId, contactsCaches, RedisConstant.USER_CONTACTS_INFO_DURATION, TimeUnit.MINUTES);
-        return contactVOS;
+        }).collect(Collectors.toList());
     }
 
     /**
@@ -158,7 +127,7 @@ public class ContactServiceImpl implements ContactService {
         }
 
         // 用户联系人列表缓存信息失效
-        redisTemplate.delete(RedisConstant.USER_CONTACTS_INFO + userId);
+        redisTemplateUtil.deleteContactCache(userId);
 
         return true;
     }
@@ -187,7 +156,7 @@ public class ContactServiceImpl implements ContactService {
         contactDao.updateById(contact);
 
         // 用户联系人列表缓存信息失效
-        redisTemplate.delete(RedisConstant.USER_CONTACTS_INFO + userId);
+        redisTemplateUtil.deleteContactCache(userId);
 
         return true;
     }

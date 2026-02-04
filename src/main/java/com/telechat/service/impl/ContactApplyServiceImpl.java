@@ -12,20 +12,23 @@ import com.telechat.mapper.dao.ContactDao;
 import com.telechat.mapper.dao.ConversationDao;
 import com.telechat.mapper.dao.ConversationMemberDao;
 import com.telechat.pojo.dto.contact.ContactApplyHandleDTO;
-import com.telechat.pojo.entity.Contact;
-import com.telechat.pojo.entity.ContactApply;
-import com.telechat.pojo.entity.Conversation;
-import com.telechat.pojo.entity.ConversationMember;
+import com.telechat.pojo.entity.*;
+import com.telechat.pojo.enums.ContactApplyStatus;
+import com.telechat.pojo.enums.ConversationStatus;
 import com.telechat.pojo.enums.ConversationType;
 import com.telechat.pojo.vo.ContactApplyVO;
 import com.telechat.service.ContactApplyService;
 import com.telechat.service.UserService;
+import com.telechat.util.RedisTemplateUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 public class ContactApplyServiceImpl implements ContactApplyService {
@@ -45,6 +48,9 @@ public class ContactApplyServiceImpl implements ContactApplyService {
     @Autowired
     private ConversationMemberDao conversationMemberDao;
 
+    @Autowired
+    private RedisTemplateUtil redisTemplateUtil;
+
     /**
      * 添加联系申请
      *
@@ -54,30 +60,38 @@ public class ContactApplyServiceImpl implements ContactApplyService {
     @Transactional
     @Override
     public boolean addContactApply(Long userId, String contactUserName) {
-        // 添加联系人
+        // 1. 基础校验
         Long contactId = userService.getUserIdByUsername(contactUserName);
         if(contactId == null){
             throw new ContactException(ExceptionConstant.NOT_EXIST_CODE,ExceptionConstant.USER_NOT_EXIST_MSG);
         }
 
-        // 校验是否已添加联系人
+        // 防止给自己发请求
+        if (userId.equals(contactId)) {
+            throw new ContactException(
+                    ExceptionConstant.NOT_ALLOWED_CODE,
+                    ExceptionConstant.NOT_ALLOWED_SEND_APPLY_MYSELF
+            );
+        }
+
+        // 2. 校验是否已添加联系人 //todo 可以从redis中获取
         Contact contact = contactDao.selectByUserIdAndFriendId(userId, contactId);
         if(contact != null){
             throw new ContactException(ExceptionConstant.ALREADY_EXIST_CODE,ExceptionConstant.CONTACT_ALREADY_EXIST_MSG);
         }
 
-        // 校验之前是否存在该联系申请
+        // 3. 校验之前是否存在该联系申请
         ContactApply contactApply = contactApplyDao.selectByUserIdAndFriendId(userId, contactId);
         if(contactApply != null){
             // 删除之前的联系申请
             contactApplyDao.deleteById(contactApply.getId());
         }
 
-        // 添加联系人
+        // 4. 添加联系人
         ContactApply contactApplyTmp = ContactApply.builder()
                 .userId(userId)
                 .friendId(contactId)
-                .status("PENDING")
+                .status(ContactApplyStatus.PENDING)
                 .build();
 
         contactApplyDao.insert(contactApplyTmp);
@@ -86,105 +100,139 @@ public class ContactApplyServiceImpl implements ContactApplyService {
 
     /**
      * 获取联系人申请列表【未处理】
-     *
-     * @param userId 用户ID
-     * @return List<ContactApplyVO>
+     * 优化：解决了 N+1 查询问题
      */
     @Override
     public List<ContactApplyVO> applyList(Long userId) {
-        List<ContactApply> contactApplies = contactApplyDao.selectApplyList(userId, "PENDING");
-        return contactApplies.stream()
-                .map(contactApply -> ContactApplyVO.builder()
-                        .id(contactApply.getId())
-                        .userId(contactApply.getUserId())
-                        .avatar(userService.getUserById(contactApply.getUserId()).getAvatar())
-                        .nickname(userService.getUserById(contactApply.getUserId()).getNickname())
-                        .status(contactApply.getStatus())
-                        .createTime(contactApply.getCreatedTime())
-                        .build())
-                .toList();
+        // 1. 查询所有发给我的申请 (注意：这里 userId 应该是 receiver/friendId)
+        // 假设 selectApplyList 的 SQL 逻辑是 WHERE friend_id = #{userId} AND status = #{status}
+        // 使用枚举对象传参，MybatisPlus 会自动处理
+        List<ContactApply> contactApplies = contactApplyDao.selectApplyList(userId, ContactApplyStatus.PENDING);
+
+        if (contactApplies.isEmpty()) {
+            return List.of();
+        }
+
+        // 2. 提取发起人的 ID 集合
+        Set<Long> senderIds = contactApplies.stream()
+                .map(ContactApply::getUserId)
+                .collect(Collectors.toSet());
+
+        // 3. 批量查询用户信息 (假设 userService 有此方法，如果没有建议添加)
+        // Map<UserId, UserEntity>
+        Map<Long, User> userMap = userService.getUserListByIds(senderIds).stream()
+                .collect(Collectors.toMap(User::getId, user -> user));
+
+        // 4. 组装 VO
+        return contactApplies.stream().map(apply -> {
+            User sender = userMap.get(apply.getUserId());
+            return ContactApplyVO.builder()
+                    .id(apply.getId())
+                    .userId(apply.getUserId())
+                    .avatar(sender != null ? sender.getAvatar() : null)
+                    .nickname(sender != null ? sender.getNickname() : "未知用户")
+                    .status(apply.getStatus().getDesc())
+                    .createTime(apply.getCreatedTime())
+                    .build();
+        }).collect(Collectors.toList());
     }
 
     /**
      * 处理联系人申请
      *
      * @param userId                用户ID
-     * @param contactApplyHandleDTO 处理联系人申请DTO
+     * @param dto 处理联系人申请DTO
      * @return boolean
      */
     @Transactional
     @Override
-    public boolean handleApply(Long userId, ContactApplyHandleDTO contactApplyHandleDTO) {
-        Long contactApplyId = contactApplyHandleDTO.getContactId();
-        ContactApply contactApply = contactApplyDao.selectById(contactApplyId);
-        // 校验联系是否存在
-        if(contactApplyId == null){
-            throw new ContactException(ExceptionConstant.NOT_EXIST_CODE,ExceptionConstant.CONTACT_NOT_EXIST_MSG);
+    public boolean handleApply(Long userId, ContactApplyHandleDTO dto) {
+        // dto.getContactId() 名字可能有歧义，实际应该是 applyId
+        Long applyId = dto.getContactId();
+
+        ContactApply contactApply = contactApplyDao.selectById(applyId);
+
+        // 1. 严格校验
+        if (contactApply == null) {
+            throw new ContactException(ExceptionConstant.NOT_EXIST_CODE, ExceptionConstant.CONTACT_NOT_EXIST_MSG);
         }
-        // 校验联系的friendId是否属于当前用户
-        if(!contactApply.getFriendId().equals(userId)){
-            throw new ContactException(ExceptionConstant.NOT_ALLOWED_CODE,ExceptionConstant.CONTACT_NOT_ALLOWED_MSG);
+
+        // 安全校验：确认当前操作人是这个申请的接收方
+        if (!contactApply.getFriendId().equals(userId)) {
+            throw new ContactException(ExceptionConstant.NOT_ALLOWED_CODE, "无权处理他人的好友申请");
         }
-        // 校验联系是否已处理
-        if(!contactApply.getStatus().equals("PENDING")){
-            throw new ContactException(ExceptionConstant.NOT_ALLOWED_CODE,ExceptionConstant.CONTACT_ALREADY_HANDLE_EXCEPTION_MSG);
+
+        if (contactApply.getStatus() != ContactApplyStatus.PENDING) {
+            throw new ContactException(ExceptionConstant.NOT_ALLOWED_CODE, ExceptionConstant.CONTACT_ALREADY_HANDLE_EXCEPTION_MSG);
         }
-        if(contactApplyHandleDTO.isAgree()){ // 同意
-            // 更新联系状态
-            contactApply.setStatus("ACCEPTED");
+
+        // 2. 拒绝逻辑
+        if (!dto.isAgree()) {
+            contactApply.setStatus(ContactApplyStatus.REJECTED);
             contactApplyDao.updateById(contactApply);
-
-            LocalDateTime now = LocalDateTime.now();
-
-            // 添加私聊会话
-            Conversation conversation = Conversation.builder()
-                    .type(ConversationType.getName(1))
-                    .status(true)
-                    .createdTime(now)
-                    .updatedTime(now)
-                    .build();
-
-            conversationDao.insert(conversation);
-
-            // 添加联系人
-            Contact contact = Contact.builder()
-                    .userId(contactApply.getUserId())
-                    .friendId(contactApply.getFriendId())
-                    .remark(null)
-                    .conversationId(conversation.getId())
-                    .createdTime(now)
-                    .build();
-
-            contactDao.insert(contact);
-
-            // 添加私聊会话成员（A和B）
-            ConversationMember conversationMemberA = ConversationMember.builder()
-                    .conversationId(conversation.getId())
-                    .userId(contactApply.getUserId())
-                    .isMuted(false)
-                    .isDeleted(false)
-                    .lastReadMessageId(null)
-                    .joinedTime(now)
-                    .build();
-
-            ConversationMember conversationMemberB = ConversationMember.builder()
-                    .conversationId(conversation.getId())
-                    .userId(contactApply.getFriendId())
-                    .isMuted(false)
-                    .isDeleted(false)
-                    .lastReadMessageId(null)
-                    .joinedTime(now)
-                    .build();
-
-            conversationMemberDao.insert(conversationMemberA);
-            conversationMemberDao.insert(conversationMemberB);
             return true;
         }
-        else{ // 拒绝
-            // 修改联系
-            contactApply.setStatus("REJECTED");
-            contactApplyDao.updateById(contactApply);
-        }
-        return false;
+
+        // 3. 同意逻辑
+        // 双方建立了关系，缓存失效
+        redisTemplateUtil.deleteContactCache(
+                List.of(contactApply.getUserId(), contactApply.getFriendId())
+        );
+        LocalDateTime now = LocalDateTime.now();
+
+        // 3.1 更新申请状态
+        contactApply.setStatus(ContactApplyStatus.ACCEPTED);
+        contactApplyDao.updateById(contactApply);
+
+        // 3.2 创建私聊会话
+        // TODO: 最好检查一下是否之前存在过旧的私聊会话，如果是，可以复用
+        Conversation conversation = Conversation.builder()
+                .type(ConversationType.PRIVATE)
+                .status(ConversationStatus.NORMAL)
+                .createdTime(now)
+                .updatedTime(now)
+                .build();
+        conversationDao.insert(conversation);
+
+        // 3.3 建立双向好友关系 (A->B 和 B->A)
+        // A = 申请发起人 (contactApply.getUserId())
+        // B = 我 (contactApply.getFriendId())
+
+        // 记录 1: A 的好友列表里有 B
+        Contact contactForSender = Contact.builder()
+                .userId(contactApply.getUserId())      // A
+                .friendId(contactApply.getFriendId())  // B
+                .conversationId(conversation.getId())
+                .createdTime(now)
+                .build();
+
+        // 记录 2: B 的好友列表里有 A
+        Contact contactForReceiver = Contact.builder()
+                .userId(contactApply.getFriendId())    // B
+                .friendId(contactApply.getUserId())    // A
+                .conversationId(conversation.getId())
+                .createdTime(now)
+                .build();
+
+        contactDao.insert(contactForSender);
+        contactDao.insert(contactForReceiver);
+
+        // 3.4 添加会话成员
+        ConversationMember memberA = ConversationMember.builder()
+                .conversationId(conversation.getId())
+                .userId(contactApply.getUserId())
+                .joinedTime(now)
+                .build(); // 其他字段用默认值即可
+
+        ConversationMember memberB = ConversationMember.builder()
+                .conversationId(conversation.getId())
+                .userId(contactApply.getFriendId())
+                .joinedTime(now)
+                .build();
+
+        conversationMemberDao.insert(memberA);
+        conversationMemberDao.insert(memberB);
+
+        return true;
     }
 }
