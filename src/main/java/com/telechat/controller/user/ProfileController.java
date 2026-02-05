@@ -6,13 +6,16 @@
 package com.telechat.controller.user;
 
 import com.telechat.constant.ExceptionConstant;
+import com.telechat.pojo.cache.UserInfoCache;
 import com.telechat.pojo.dto.UserInfoDTO;
 import com.telechat.pojo.entity.User;
 import com.telechat.pojo.result.Result;
 import com.telechat.pojo.vo.UserInfoVO;
 import com.telechat.service.UserService;
+import com.telechat.util.RedisTemplateUtil;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.annotation.Resource;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -27,6 +30,9 @@ public class ProfileController {
     @Autowired
     private UserService userService;
 
+    @Resource
+    private RedisTemplateUtil redisTemplateUtil;
+
     /**
      * 获取个人信息
      *
@@ -36,18 +42,19 @@ public class ProfileController {
     @GetMapping
     public Result<UserInfoVO> getUserInfo() {
         try {
-            // 根据用户ID查询用户信息
-            User user = this.getUser();
-            if (user != null) {
+            // 从Security上下文中获取用户ID
+            Long userId = (Long) SecurityContextHolder.getContext()
+                    .getAuthentication().getPrincipal();
+            if (userId != null) {
+                // 读取缓存（内置缓存的完整流程）
+                UserInfoCache userInfoCache = redisTemplateUtil.getUserInfoCache(userId);
+
                 UserInfoVO userInfoVO = UserInfoVO.builder()
-                        .username(user.getUsername())
-                        .nickname(user.getNickname())
-                        .avatar(user.getAvatar())
-                        .gender(user.getGender())
-                        .bio(user.getBio())
-                        .createTime(user.getCreateTime())
-                        .updateTime(user.getUpdateTime())
-                        .lastLoginTime(user.getLastLoginTime())
+                        .username(userInfoCache.getUsername())
+                        .nickname(userInfoCache.getNickname())
+                        .avatar(userInfoCache.getAvatar())
+                        .gender(userInfoCache.getGender())
+                        .bio(userInfoCache.getBio())
                         .build();
                 return Result.success(userInfoVO);
             } else {

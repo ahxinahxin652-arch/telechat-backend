@@ -21,4 +21,6 @@ public class UserInfoCache {
     private String avatar;
     private byte gender;
     private String bio;
+
+
 }

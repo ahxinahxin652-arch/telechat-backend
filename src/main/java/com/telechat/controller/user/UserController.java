@@ -141,9 +141,6 @@ public class UserController {
                     .avatar(user.getAvatar())
                     .gender(user.getGender())
                     .bio(user.getBio())
-                    .createTime(user.getCreateTime())
-                    .updateTime(user.getUpdateTime())
-                    .lastLoginTime(user.getLastLoginTime())
                     .build();
             UserLoginVO userLoginVO = new UserLoginVO(token, "Bearer", jwtTokenProvider.getJwtExpiration(), userInfoVO);
             return Result.success(userLoginVO);

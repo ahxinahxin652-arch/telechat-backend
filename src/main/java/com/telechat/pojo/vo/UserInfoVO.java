@@ -23,7 +23,4 @@ public class UserInfoVO {
     private String avatar;
     private Byte gender;
     private String bio;
-    private LocalDateTime createTime;
-    private LocalDateTime updateTime;
-    private LocalDateTime lastLoginTime;
 }
