@@ -11,6 +11,8 @@ import com.telechat.pojo.dto.UserInfoDTO;
 import com.telechat.pojo.entity.User;
 import com.telechat.service.UserService;
 import com.telechat.util.AliOssUtil;
+import com.telechat.util.RedisTemplateUtil;
+import jakarta.annotation.Resource;
 import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,6 +32,9 @@ public class UserServiceImpl implements UserService {
 
     @Autowired
     private UserDao userDao;
+
+    @Resource
+    private RedisTemplateUtil redisTemplateUtil;
 
     /**
      * 根据用户ID获取用户信息
@@ -55,6 +60,9 @@ public class UserServiceImpl implements UserService {
         user.setBio(userInfoDTO.getBio());
 
         userDao.updateById(user);
+
+        // 清除该用户的个人信息缓存
+        redisTemplateUtil.deleteUserInfoCache(user.getId());
     }
 
     /**
@@ -75,6 +83,10 @@ public class UserServiceImpl implements UserService {
         user.setAvatar(avatarUrl);
 
         userDao.updateById(user);
+
+        // 清除该用户的个人信息缓存
+        redisTemplateUtil.deleteUserInfoCache(user.getId());
+
         return avatarUrl;
     }
 
