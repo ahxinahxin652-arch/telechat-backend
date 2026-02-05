@@ -31,7 +31,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-// TODO 添加Redis缓存，并注意解决缓存穿透、缓存雪崩、缓存击穿等问题
 @Service
 public class ContactServiceImpl implements ContactService {
 
