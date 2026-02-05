@@ -45,8 +45,8 @@ public class RedisTemplateUtil {
         if (cacheObj != null) {
             UserInfoCache userCache = (UserInfoCache) cacheObj;
             // 【关键判断】如果是空对象标记，直接返回 null，不再查库
-            if (userCache.getUserId() != null && userCache.getUserId() == -1L) {
-                return null;
+            if (userCache.isNullPlaceholder()) {
+                return null; // 拦截
             }
             return userCache;
         }

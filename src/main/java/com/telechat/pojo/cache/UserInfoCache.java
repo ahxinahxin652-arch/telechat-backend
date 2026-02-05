@@ -5,6 +5,7 @@
  */
 package com.telechat.pojo.cache;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -22,5 +23,9 @@ public class UserInfoCache {
     private byte gender;
     private String bio;
 
-
+    // 辅助方法：判断是否为空对象标记
+    @JsonIgnore // 不需要序列化这个方法
+    public boolean isNullPlaceholder() {
+        return this.userId != null && this.userId == -1L;
+    }
 }
