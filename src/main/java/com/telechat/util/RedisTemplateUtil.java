@@ -29,6 +29,66 @@ public class RedisTemplateUtil {
     private final ContactApplyDao contactApplyDao;
     private final UserDao userDao;
 
+    //------------------------------------------------个人信息缓存相关方法------------------------------------------------------------------
+    /**
+     * 获取用户信息缓存
+     * 场景：查看个人信息，查看他人信息
+     *
+     * @param userId 用户ID
+     */
+    public UserInfoCache getUserInfoCache(Long userId) {
+        String cacheKey = RedisConstant.USER_INFO + userId;
+
+        // 1. 查缓存
+        Object cacheObj = redisTemplate.opsForValue().get(cacheKey);
+
+        if (cacheObj != null) {
+            UserInfoCache userCache = (UserInfoCache) cacheObj;
+            // 【关键判断】如果是空对象标记，直接返回 null，不再查库
+            if (userCache.getUserId() != null && userCache.getUserId() == -1L) {
+                return null;
+            }
+            return userCache;
+        }
+
+        // 查库
+        User user = userDao.selectById(userId);
+
+        // 空数据缓存不存在的空对象，防止缓存穿透
+        if (user == null) {
+            // 【防穿透关键】构建一个 ID 为 -1 的空对象
+            UserInfoCache nullCache = UserInfoCache.builder()
+                    .userId(-1L) // 标记位
+                    .build();
+
+            // 写入Redis
+            redisTemplate.opsForValue().set(
+                    cacheKey,
+                    nullCache,
+                    RedisConstant.EMPTY_DATA,
+                    TimeUnit.MINUTES);
+            return null;
+        }
+
+        // 正常缓存数据
+        UserInfoCache userInfoCache = UserInfoCache.builder()
+                .userId(user.getId())
+                .username(user.getUsername())
+                .nickname(user.getNickname())
+                .avatar(user.getAvatar())
+                .gender(user.getGender())
+                .bio(user.getBio())
+                .build();
+
+        redisTemplate.opsForValue().set(
+                cacheKey,
+                userInfoCache,
+                RedisConstant.USER_INFO_DURATION,
+                TimeUnit.MINUTES
+        );
+        return userInfoCache;
+    }
+
     /**
      * 批量获取用户缓存信息（核心优化方法）
      * 策略：Redis MultiGet -> 过滤未命中 -> DB BatchQuery -> Redis MultiSet -> 合并结果
@@ -106,6 +166,18 @@ public class RedisTemplateUtil {
         }
 
         return resultMap;
+    }
+
+    /**
+     * 删除用户个人信息缓存
+     * 场景：用户修改个人信息
+     *
+     * @param userId 用户ID
+     */
+    public void deleteUserInfoCache(Long userId) {
+        String cacheKey = RedisConstant.USER_INFO + userId;
+        redisTemplate.delete(cacheKey);
+        log.info("已清除用户 {} 的个人信息缓存", userId);
     }
 
     //------------------------------------------------联系人缓存相关方法------------------------------------------------------------------
