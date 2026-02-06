@@ -55,7 +55,7 @@ public class ContactServiceImpl implements ContactService {
      * @param userId 用户ID
      * @return List<ContactVO>
      */
-    @Override
+    @Override// todo 分页获取请求
     public List<ContactVO> list(Long userId) {
         // 1. 获取好友关系列表 (从 Redis，仅包含 IDs)
         List<ContactsCache> relationCaches = redisTemplateUtil.getContactCache(userId);

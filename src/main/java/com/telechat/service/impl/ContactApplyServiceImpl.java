@@ -5,7 +5,9 @@
      */
     package com.telechat.service.impl;
 
+    import com.telechat.annotation.FrequencyLock;
     import com.telechat.constant.ExceptionConstant;
+    import com.telechat.constant.RedisConstant;
     import com.telechat.exception.exceptions.ContactException;
     import com.telechat.mapper.dao.ContactApplyDao;
     import com.telechat.mapper.dao.ContactDao;
@@ -30,6 +32,8 @@
     import java.util.List;
     import java.util.Map;
     import java.util.Set;
+    import java.util.UUID;
+    import java.util.concurrent.TimeUnit;
     import java.util.stream.Collectors;
 
     @Service
@@ -59,8 +63,13 @@
          * @param userId    用户ID
          * @param contactUserName 用户名
          */
-        @Transactional
         @Override
+        @Transactional(rollbackFor = Exception.class) // 内层事务 Lock(Transactional)
+        @FrequencyLock(
+                key = "'lock:contact:apply:' + #userId + ':' + #contactUserName",
+                waitTime = 0, // 0表示不等待，立即失败(防止手抖重复点击)
+                msg = "请勿重复提交申请"
+        )
         public boolean addContactApply(Long userId, String contactUserName) {
             // 1. 基础校验
             Long contactId = userService.getUserIdByUsername(contactUserName);
@@ -82,11 +91,23 @@
                 throw new ContactException(ExceptionConstant.ALREADY_EXIST_CODE,ExceptionConstant.CONTACT_ALREADY_EXIST_MSG);
             }
 
-            // 3. 校验之前是否存在该联系申请
-            ContactApply contactApply = contactApplyDao.selectByUserIdAndFriendId(userId, contactId);
-            if(contactApply != null){
-                // 删除之前的联系申请
-                contactApplyDao.deleteById(contactApply.getId());
+            // 3. 核心优化：查询旧申请记录（若存在之前已被同意或拒绝的请求，重新复用）
+            ContactApply existingApply = contactApplyDao.selectByUserIdAndFriendId(userId, contactId);
+
+            if (existingApply == null) {
+                // 不存在 -> 插入新记录
+                ContactApply newApply = ContactApply.builder()
+                        .userId(userId).friendId(contactId).status(ContactApplyStatus.PENDING)
+                        .build();
+                contactApplyDao.insert(newApply);
+            } else {
+                // 已存在 -> 更新旧记录 (复活)
+                // 只有当状态不是 PENDING 时才更新，防止重复刷新时间
+                if (existingApply.getStatus() != ContactApplyStatus.PENDING) {
+                    existingApply.setStatus(ContactApplyStatus.PENDING);
+                    existingApply.setCreatedTime(LocalDateTime.now()); // 更新时间，让它排到列表最前
+                    contactApplyDao.updateById(existingApply);
+                }
             }
 
             // 4. 添加联系人
@@ -108,7 +129,7 @@
          * 获取联系人申请列表【未处理】
          * 优化：解决了 N+1 查询问题
          */
-        @Override
+        @Override // todo 分页获取请求
         public List<ContactApplyVO> applyList(Long userId) {
             // 查询所有发给我的申请 (注意：这里 userId 应该是 receiver/friendId)
             // 假设 selectApplyList 的 SQL 逻辑是 WHERE friend_id = #{userId} AND status = #{status}
@@ -148,8 +169,12 @@
          * @param dto 处理联系人申请DTO
          * @return boolean
          */
-        @Transactional
         @Override
+        @Transactional(rollbackFor = Exception.class) // 内层事务 Lock(Transactional)
+        @FrequencyLock(
+                key = "'lock:contact:handle:' + #dto.contactId", // 支持解析对象属性
+                msg = "该申请正在处理中"
+        )
         public boolean handleApply(Long userId, ContactApplyHandleDTO dto) {
             // dto.getContactId() 名字可能有歧义，实际应该是 applyId
             Long applyId = dto.getContactId();
@@ -174,6 +199,8 @@
             if (!dto.isAgree()) {
                 contactApply.setStatus(ContactApplyStatus.REJECTED);
                 contactApplyDao.updateById(contactApply);
+                // 联系人申请缓存失效
+                redisTemplateUtil.deleteContactApplyCache(userId);
                 return true;
             }
 

@@ -73,4 +73,9 @@ public class GlobalException {
         return Result.error(e.getCode(), e.getMessage());
     }
 
+    @ExceptionHandler(value = {FrequencyException.class})
+    public Result<String> frequencyExceptionHandler(HttpServletRequest request, FrequencyException e) {
+        log.info("请求过于频繁,请求地址:{},错误信息:{}", request.getRequestURI(), e.getMessage());
+        return Result.error(e.getCode(), e.getMessage());
+    }
 }

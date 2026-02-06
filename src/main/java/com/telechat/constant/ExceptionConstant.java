@@ -89,4 +89,11 @@ public class ExceptionConstant {
      *
      */
     public static final Integer USER_NOT_LOGIN_ERROR_CODE = 101;
+
+    /**
+     * 请求过于繁忙
+     *
+     */
+    public static final Integer TOO_BUSY_CODE = 503;
+    public static final String TOO_BUSY_MSG = "请求过于繁忙，请稍后再试";
 }

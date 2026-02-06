@@ -11,6 +11,10 @@ public class RedisConstant {
     // 空信息，防止缓存穿透
     public static final Long EMPTY_DATA = 5L;
 
+    // 锁
+    public static final String LOCK_CONTACT_APPLY = "lock:contactApply:";
+    public static final Long LOCK_CONTACT_APPLY_DURATION = 5L;
+
     // 用户信息缓存
     public static final String USER_INFO = "user:info:";
     public static final Long USER_INFO_DURATION = 30L; //30min
