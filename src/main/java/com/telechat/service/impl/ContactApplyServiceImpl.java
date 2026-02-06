@@ -109,16 +109,6 @@
                     contactApplyDao.updateById(existingApply);
                 }
             }
-
-            // 4. 添加联系人
-            ContactApply contactApplyTmp = ContactApply.builder()
-                    .userId(userId)
-                    .friendId(contactId)
-                    .status(ContactApplyStatus.PENDING)
-                    .build();
-
-            contactApplyDao.insert(contactApplyTmp);
-
             // 删除联系人申请缓存
             redisTemplateUtil.deleteContactApplyCache(contactId);
 
