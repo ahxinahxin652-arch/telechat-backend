@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.*;
 
+import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -73,45 +74,6 @@ public class TelechatWebSocketHandler implements WebSocketHandler {
         }
     }
 
-/*    // 处理聊天消息
-    private void handleChatMessage(Long senderId, JsonNode message) throws Exception {
-        Long receiverId = message.get("receiverId").asLong();
-        String content = message.get("content").asText();
-
-        // 保存消息到数据库
-        ChatMessage chatMessage = new ChatMessage();
-        chatMessage.setSenderId(senderId);
-        chatMessage.setReceiverId(receiverId);
-        chatMessage.setContent(content);
-        chatMessage.setTimestamp(LocalDateTime.now());
-        chatMessage.setStatus("sent");
-        chatMessageService.saveMessage(chatMessage);
-
-        // 发送给接收者
-        WebSocketSession receiverSession = userSessions.get(receiverId);
-        if (receiverSession != null && receiverSession.isOpen()) {
-            WebSocketMessage wsMessage = new WebSocketMessage();
-            wsMessage.setType("chat");
-            wsMessage.setSenderId(senderId);
-            wsMessage.setContent(content);
-            wsMessage.setTimestamp(chatMessage.getTimestamp());
-            receiverSession.sendMessage(new TextMessage(objectMapper.writeValueAsString(wsMessage)));
-
-            // 更新消息状态为已送达
-            chatMessage.setStatus("delivered");
-            chatMessageService.updateMessageStatus(chatMessage.getId(), "delivered");
-        }
-
-        // 发送确认给发送者
-        WebSocketSession senderSession = userSessions.get(senderId);
-        if (senderSession != null && senderSession.isOpen()) {
-            WebSocketMessage ackMessage = new WebSocketMessage();
-            ackMessage.setType("ack");
-            ackMessage.setMessageId(chatMessage.getId());
-            ackMessage.setStatus(chatMessage.getStatus());
-            senderSession.sendMessage(new TextMessage(objectMapper.writeValueAsString(ackMessage)));
-        }
-    }*/
 
     // 处理正在输入消息
     private void handleTypingMessage(Long senderId, JsonNode message) throws Exception {
@@ -167,20 +129,28 @@ public class TelechatWebSocketHandler implements WebSocketHandler {
         }
     }
 
-    // 在类中添加新方法
-    public void sendMessageToUser(Long userId, WebSocketMessage message) {
+    /**
+     * 【核心修改点】发送消息给指定用户
+     * 支持发送任意自定义对象 (DTO, VO, Map, etc.)
+     * * @param userId 接收者ID
+     * @param messagePayload 任意对象，将被 Jackson 序列化为 JSON
+     */
+    public void sendMessageToUser(Long userId, Object messagePayload) {
         WebSocketSession session = userSessions.get(userId);
         if (session != null && session.isOpen()) {
-            try {
-                String jsonMessage = objectMapper.writeValueAsString(message);
-                session.sendMessage(new TextMessage(jsonMessage));
-            } catch (Exception e) {
-                log.error("WEB发送消息给用户 {} 失败: {}", userId, e.getMessage());
-                // 如果发送失败，从会话列表中移除
-                userSessions.remove(userId);
+            // 加锁防止多线程并发发送导致 "TEXT_PARTIAL_WRITING" 错误
+            synchronized (session) {
+                try {
+                    // Jackson 会自动根据传入对象的类结构生成 JSON
+                    String jsonMessage = objectMapper.writeValueAsString(messagePayload);
+                    session.sendMessage(new TextMessage(jsonMessage));
+                } catch (IOException e) {
+                    log.error("发送消息给用户 {} 失败", userId, e);
+                }
             }
         } else {
-            log.warn("WEB用户 {} 不在线或连接已关闭", userId);
+            // 用户不在线的处理逻辑（例如存离线消息）
+            log.debug("用户 {} 不在线，消息未发送", userId);
         }
     }
 
