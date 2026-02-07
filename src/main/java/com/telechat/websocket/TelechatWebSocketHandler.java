@@ -2,110 +2,138 @@ package com.telechat.websocket;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.telechat.pojo.entity.ChatMessage;
-import lombok.Data;
+import com.telechat.pojo.dto.ws.WsMessage;
+import com.telechat.pojo.enums.WsMessageType;
+import com.telechat.util.SnowflakeIdGenerator; // [引用 1]
+import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.*;
 
 import java.io.IOException;
-import java.time.LocalDateTime;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Component
 @Slf4j
 public class TelechatWebSocketHandler implements WebSocketHandler {
 
-    // 存储用户连接
     private static final ConcurrentHashMap<Long, WebSocketSession> userSessions = new ConcurrentHashMap<>();
 
-
     @Autowired
-    private ObjectMapper objectMapper; // 正确序列化日期
+    private ObjectMapper objectMapper;
+
+    // 1. 注入雪花算法生成器 (保证高性能生成唯一ID)
+    @Autowired
+    private SnowflakeIdGenerator snowflakeIdGenerator;
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
-        Long userId = (Long) session.getAttributes().get("userId");
+        Long userId = getUserId(session);
         if (userId != null) {
             userSessions.put(userId, session);
-            log.info("用户 {} 连接建立，当前在线用户数: {}", userId, userSessions.size());
+            log.info("用户 [{}] 上线，当前在线: {}", userId, userSessions.size());
 
-            // 发送连接成功消息
-            WebSocketMessage connectMessage = new WebSocketMessage();
-            connectMessage.setType("system");
-            connectMessage.setContent("连接成功");
-            connectMessage.setTimestamp(LocalDateTime.now());
-            session.sendMessage(new TextMessage(objectMapper.writeValueAsString(connectMessage)));
+            // 2. 发送连接成功通知 (系统消息也带上 ID)
+            // 系统消息 senderId = 0
+            WsMessage<String> systemMsg = WsMessage.of(
+                    WsMessageType.SYSTEM,
+                    snowflakeIdGenerator.nextId(),
+                    0L,
+                    "连接成功"
+            );
+            sendMsg(userId, systemMsg);
         }
     }
 
     @Override
-    public void handleMessage(WebSocketSession session, org.springframework.web.socket.WebSocketMessage<?> message) throws Exception {
-        Long userId = (Long) session.getAttributes().get("userId");
+    public void handleMessage(WebSocketSession session, WebSocketMessage<?> message) throws Exception {
+        Long userId = getUserId(session);
         if (userId == null) return;
 
-        // 检查消息类型是否为TextMessage
-        if (!(message instanceof TextMessage)) {
-            log.warn("收到非文本消息类型: {}", message.getClass().getName());
+        if (message instanceof PongMessage) return;
+        if (!(message instanceof TextMessage)) return;
+
+        String payload = ((TextMessage) message).getPayload();
+        try {
+            JsonNode rootNode = objectMapper.readTree(payload);
+            String typeStr = rootNode.path("type").asText();
+
+            // 3. 处理不同类型的消息
+            if (WsMessageType.TYPING.getValue().equals(typeStr)) {
+                handleTypingMessage(userId, rootNode);
+            }
+            // 扩展：处理客户端发来的 ACK 确认消息 (企业级功能：消息必达)
+            // else if ("ack".equals(typeStr)) {
+            //     handleAckMessage(userId, rootNode);
+            // }
+
+        } catch (Exception e) {
+            log.error("消息处理异常: ", e);
+            // 错误消息也带上 ID
+            sendMsg(userId, WsMessage.of(
+                    WsMessageType.ERROR,
+                    snowflakeIdGenerator.nextId(),
+                    0L,
+                    "消息格式错误"
+            ));
+        }
+    }
+
+    /**
+     * 处理 "正在输入" 状态
+     */
+    private void handleTypingMessage(Long senderId, JsonNode rootNode) {
+        JsonNode dataNode = rootNode.path("data");
+        if (dataNode.isMissingNode()) return;
+
+        long receiverId = dataNode.path("receiverId").asLong();
+
+        // 4. 构造标准消息 (即便 "typing" 是瞬时状态，生成 ID 也有助于前端维护唯一的 key)
+        WsMessage<Void> typingMsg = WsMessage.of(
+                WsMessageType.TYPING,
+                snowflakeIdGenerator.nextId(), // 生成唯一 ID
+                senderId,
+                null
+        );
+
+        sendMsg(receiverId, typingMsg);
+    }
+
+    /**
+     * 【核心发送方法】
+     * 保持不变，负责序列化和线程安全发送
+     */
+    public void sendMsg(Long receiverId, WsMessage<?> message) {
+        WebSocketSession session = userSessions.get(receiverId);
+        if (session == null || !session.isOpen()) {
+            // 进阶：如果不是瞬时消息(typing)，而是业务消息(contact_apply)，
+            //TODO 此时应考虑写入 Redis 离线消息队列
             return;
         }
 
-        // 获取文本消息内容
-        String payload = ((TextMessage) message).getPayload();
-        log.info("收到用户 {} 的消息: {}", userId, payload);
-
-        try {
-            JsonNode jsonNode = objectMapper.readTree(payload);
-            String type = jsonNode.get("type").asText();
-
-            switch (type) {
-                case "chat":
-                    //handleChatMessage(userId, jsonNode);
-                    break;
-                case "typing":
-                    handleTypingMessage(userId, jsonNode);
-                    break;
-                default:
-                    log.warn("未知消息类型: {}", type);
+        synchronized (session) {
+            try {
+                String json = objectMapper.writeValueAsString(message);
+                session.sendMessage(new TextMessage(json));
+            } catch (IOException e) {
+                log.error("发送消息给用户 [{}] 失败: {}", receiverId, e.getMessage());
+                userSessions.remove(receiverId);
             }
-        } catch (Exception e) {
-            log.error("处理消息失败: {}", e.getMessage());
         }
     }
 
-
-    // 处理正在输入消息
-    private void handleTypingMessage(Long senderId, JsonNode message) throws Exception {
-        Long receiverId = message.get("receiverId").asLong();
-
-        WebSocketSession receiverSession = userSessions.get(receiverId);
-        if (receiverSession != null && receiverSession.isOpen()) {
-            WebSocketMessage typingMessage = new WebSocketMessage();
-            typingMessage.setType("typing");
-            typingMessage.setSenderId(senderId);
-            typingMessage.setTimestamp(LocalDateTime.now());
-            receiverSession.sendMessage(new TextMessage(objectMapper.writeValueAsString(typingMessage)));
-        }
+    // ... handleTransportError, afterConnectionClosed, getUserId, removeSession 保持不变 ...
+    @Override
+    public void handleTransportError(WebSocketSession session, Throwable exception) {
+        removeSession(session);
+        log.error("连接异常", exception);
     }
 
     @Override
-    public void handleTransportError(WebSocketSession session, Throwable exception) throws Exception {
-        Long userId = (Long) session.getAttributes().get("userId");
-        if (userId != null) {
-            userSessions.remove(userId);
-            log.error("用户 {} 连接异常: {}", userId, exception.getMessage());
-        }
-    }
-
-
-    @Override
-    public void afterConnectionClosed(WebSocketSession session, CloseStatus closeStatus) throws Exception {
-        Long userId = (Long) session.getAttributes().get("userId");
-        if (userId != null) {
-            userSessions.remove(userId);
-            log.info("用户 {} 连接关闭，当前在线用户数: {}", userId, userSessions.size());
-        }
+    public void afterConnectionClosed(WebSocketSession session, CloseStatus closeStatus) {
+        removeSession(session);
+        log.info("用户 [{}] 下线", getUserId(session));
     }
 
     @Override
@@ -113,55 +141,15 @@ public class TelechatWebSocketHandler implements WebSocketHandler {
         return false;
     }
 
-    // 添加缺失的方法：发送消息给指定用户
-    public void sendMessageToUser(Long userId, TextMessage message) {
-        WebSocketSession session = userSessions.get(userId);
-        if (session != null && session.isOpen()) {
-            try {
-                session.sendMessage(message);
-            } catch (Exception e) {
-                log.error("TEXT发送消息给用户 {} 失败: {}", userId, e.getMessage());
-                // 如果发送失败，从会话列表中移除
-                userSessions.remove(userId);
-            }
-        } else {
-            log.warn("TEXT用户 {} 不在线或连接已关闭", userId);
-        }
+    private Long getUserId(WebSocketSession session) {
+        Object id = session.getAttributes().get("userId");
+        return id instanceof Long ? (Long) id : null;
     }
 
-    /**
-     * 【核心修改点】发送消息给指定用户
-     * 支持发送任意自定义对象 (DTO, VO, Map, etc.)
-     * * @param userId 接收者ID
-     * @param messagePayload 任意对象，将被 Jackson 序列化为 JSON
-     */
-    public void sendMessageToUser(Long userId, Object messagePayload) {
-        WebSocketSession session = userSessions.get(userId);
-        if (session != null && session.isOpen()) {
-            // 加锁防止多线程并发发送导致 "TEXT_PARTIAL_WRITING" 错误
-            synchronized (session) {
-                try {
-                    // Jackson 会自动根据传入对象的类结构生成 JSON
-                    String jsonMessage = objectMapper.writeValueAsString(messagePayload);
-                    session.sendMessage(new TextMessage(jsonMessage));
-                } catch (IOException e) {
-                    log.error("发送消息给用户 {} 失败", userId, e);
-                }
-            }
-        } else {
-            // 用户不在线的处理逻辑（例如存离线消息）
-            log.debug("用户 {} 不在线，消息未发送", userId);
+    private void removeSession(WebSocketSession session) {
+        Long userId = getUserId(session);
+        if (userId != null) {
+            userSessions.remove(userId);
         }
-    }
-
-    // 内部消息类
-    @Data
-    public static class WebSocketMessage {
-        private String type;
-        private Long messageId;
-        private Long senderId;
-        private String content;
-        private String status;
-        private LocalDateTime timestamp;
     }
 }

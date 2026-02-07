@@ -1,8 +1,11 @@
 package com.telechat.util;
 
+import org.springframework.stereotype.Component;
+import org.springframework.stereotype.Repository;
+
 /**
  * 雪花算法 ID 生成器
- *
+ * <p>
  * 结构（64bit）：
  * 0 - 41bit 时间戳 - 5bit 数据中心 - 5bit 机器号 - 12bit 序列号
  */
