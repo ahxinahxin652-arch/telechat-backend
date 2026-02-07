@@ -28,5 +28,6 @@ public class ContactApply {
     private Long userId;
     private Long friendId;
     private ContactApplyStatus status;
+    private Boolean isRead;
     private LocalDateTime createdTime;
 }

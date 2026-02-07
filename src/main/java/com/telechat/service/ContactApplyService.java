@@ -31,4 +31,19 @@ public interface ContactApplyService {
      * @return boolean
     * */
     boolean handleApply(Long userId, ContactApplyHandleDTO contactApplyHandleDTO);
+
+    /**
+     * 查询未读好友请求数量
+     *
+     * @param userId                用户ID
+     * @return Long
+     */
+    Long getUnreadCount(Long userId);
+
+    /**
+     * 标记所有好友请求已读
+     *
+     * @param userId                用户ID
+     */
+    void markAllAsRead(Long userId);
 }

@@ -77,4 +77,19 @@ public class ContactApplyController {
             return Result.error(500, "处理联系人申请失败");
         }
     }
+
+    @GetMapping("/unread-count")
+    @Operation(summary = "获取未读好友申请数量")
+    public Result<Long> getUnreadCount() {
+        Long userId = (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        return Result.success(contactApplyService.getUnreadCount(userId));
+    }
+
+    @PutMapping("/read-all")
+    @Operation(summary = "清空好友申请未读状态")
+    public Result<String> markAllAsRead() {
+        Long userId = (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        contactApplyService.markAllAsRead(userId);
+        return Result.success();
+    }
 }

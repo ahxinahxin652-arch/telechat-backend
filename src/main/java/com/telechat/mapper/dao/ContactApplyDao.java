@@ -6,6 +6,7 @@
 package com.telechat.mapper.dao;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.telechat.mapper.ContactApplyMapper;
 import com.telechat.pojo.entity.ContactApply;
@@ -94,5 +95,31 @@ public class ContactApplyDao {
      */
     public void deleteById(Long id) {
         contactApplyMapper.deleteById(id);
+    }
+
+    /**
+     * 查询未读申请数量
+     *
+     * @param userId 查询该用户的未读好友申请
+     * @return count
+     */
+    public Long getUnreadContactApplyCount(Long userId) {
+        LambdaQueryWrapper<ContactApply> queryWrapper = new LambdaQueryWrapper<>();
+        queryWrapper.eq(ContactApply::getFriendId, userId)
+                .eq(ContactApply::getIsRead, false); // 0
+        return contactApplyMapper.selectCount(queryWrapper);
+    }
+
+    /**
+     * 标记所有申请为已读状态
+     *
+     * @param userId 已读该用户的好友申请
+     */
+    public void markAll(Long userId) {
+        LambdaUpdateWrapper<ContactApply> updateWrapper = new LambdaUpdateWrapper<>();
+        updateWrapper.eq(ContactApply::getFriendId, userId)
+                .eq(ContactApply::getIsRead, false)
+                .set(ContactApply::getIsRead, true);
+        contactApplyMapper.update(null, updateWrapper);
     }
 }

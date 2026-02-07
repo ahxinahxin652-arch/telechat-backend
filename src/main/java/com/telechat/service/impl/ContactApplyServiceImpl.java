@@ -9,6 +9,7 @@ import com.telechat.annotation.FrequencyLock;
 import com.telechat.constant.ExceptionConstant;
 import com.telechat.constant.RedisConstant;
 import com.telechat.exception.exceptions.ContactException;
+import com.telechat.mapper.ContactApplyMapper;
 import com.telechat.mapper.dao.ContactApplyDao;
 import com.telechat.mapper.dao.ContactDao;
 import com.telechat.mapper.dao.ConversationDao;
@@ -65,6 +66,8 @@ public class ContactApplyServiceImpl implements ContactApplyService {
 
     @Autowired
     private MessageService messageService;
+    @Autowired
+    private ContactApplyMapper contactApplyMapper;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -123,6 +126,7 @@ public class ContactApplyServiceImpl implements ContactApplyService {
             // 只有非 PENDING 状态才更新，避免重复刷新造成骚扰
             if (existingApply.getStatus() != ContactApplyStatus.PENDING) {
                 existingApply.setStatus(ContactApplyStatus.PENDING);
+                existingApply.setIsRead(false);    // 重新设为未读
                 existingApply.setCreatedTime(now); // 更新时间顶到最前
                 contactApplyDao.updateById(existingApply);
             }
@@ -306,5 +310,26 @@ public class ContactApplyServiceImpl implements ContactApplyService {
         conversationMemberDao.insert(memberB);
 
         return true;
+    }
+
+    /**
+     * 查询未读好友请求数量
+     *
+     * @param userId                用户ID
+     * @return Long
+     */
+    public Long getUnreadCount(Long userId) {
+        // 直接查 DB (有了索引速度很快)
+        return contactApplyDao.getUnreadContactApplyCount(userId);
+    }
+
+    /**
+     * 标记所有好友请求已读
+     *
+     * @param userId                用户ID
+     */
+    @Transactional
+    public void markAllAsRead(Long userId) {
+        contactApplyDao.markAll(userId);
     }
 }
