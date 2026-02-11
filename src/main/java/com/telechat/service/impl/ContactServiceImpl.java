@@ -78,9 +78,10 @@ public class ContactServiceImpl implements ContactService {
             UserInfoCache info = userInfoMap.get(relation.getFriendId());
 
             // 处理 info 可能为 null 的情况（例如用户注销了，或者数据库脏数据）
-            String nickname = (info != null) ? info.getNickname() : "未知用户";
+            String nickname = (info != null) ? info.getNickname() : null;
             String avatar = (info != null) ? info.getAvatar() : null;
             String username = (info != null) ? info.getUsername() : null;
+            String bio = (info != null) ? info.getBio() : null;
 
             return ContactVO.builder()
                     .id(relation.getContactId())
@@ -89,6 +90,7 @@ public class ContactServiceImpl implements ContactService {
                     .nickname(nickname)           // 昵称来自实体缓存
                     .username(username)
                     .avatar(avatar)
+                    .bio(bio)                     // 签名来自实体缓存
                     .build();
         }).collect(Collectors.toList());
     }
@@ -100,7 +102,7 @@ public class ContactServiceImpl implements ContactService {
      * @param userId 用户ID
      * @return boolean
      */
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     @Override
     public boolean delete(Long id, Long userId) {
         // 查找联系人是否存在

@@ -77,7 +77,7 @@ public class ContactApplyServiceImpl implements ContactApplyService {
             msg = "请勿重复提交申请"
     )
     public boolean addContactApply(Long userId, String contactUserName) {
-        // 1. 基础校验 (保持不变)
+        // 1. 基础校验
         Long contactId = userService.getUserIdByUsername(contactUserName);
         if (contactId == null) {
             throw new ContactException(ExceptionConstant.NOT_EXIST_CODE, ExceptionConstant.USER_NOT_EXIST_MSG);
@@ -86,86 +86,85 @@ public class ContactApplyServiceImpl implements ContactApplyService {
             throw new ContactException(ExceptionConstant.NOT_ALLOWED_CODE, ExceptionConstant.NOT_ALLOWED_SEND_APPLY_MYSELF);
         }
 
-        // 2. 校验是否已添加联系人
-        Contact contact = contactDao.selectByUserIdAndFriendId(userId, contactId);
-        if (contact != null) {
-            throw new ContactException(ExceptionConstant.ALREADY_EXIST_CODE, ExceptionConstant.CONTACT_ALREADY_EXIST_MSG);
-        }
-
-        // ---------------------------------------------------------
-        // 【性能优化】提前准备好通知所需的数据 (Sender Info)
-        // 优先查 Redis，避免在事务锁内进行不必要的 DB 查询
-        // ---------------------------------------------------------
         UserInfoCache senderInfo = redisTemplateUtil.getUserInfoCache(userId);
         if (senderInfo == null) {
             // 如果这里查不到，说明数据异常
             throw new ContactException(ExceptionConstant.NOT_EXIST_CODE, ExceptionConstant.USER_NOT_EXIST_MSG);
         }
 
-        // 3. 核心逻辑：Upsert (更新或插入)
-        ContactApply existingApply = contactApplyDao.selectByUserIdAndFriendId(userId, contactId);
+        // 2. 校验是否已添加联系人
+        Contact contact = contactDao.selectByUserIdAndFriendId(userId, contactId);
+        if (contact != null) {
+            throw new ContactException(ExceptionConstant.ALREADY_EXIST_CODE, ExceptionConstant.CONTACT_ALREADY_EXIST_MSG);
+        }
 
-        // 定义一个 final 变量用于后续 WebSocket 通知，解决作用域问题
-        Long finalApplyId;
+        // --- 2. 写操作 (开启事务) ---
+        return executeAddApplyTransaction(userId, contactId, senderInfo);
+    }
+
+    /**
+     * 将事务逻辑抽取为独立方法，确保事务粒度最小化
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public boolean executeAddApplyTransaction(Long userId, Long contactId, UserInfoCache senderInfo) {
         LocalDateTime now = LocalDateTime.now();
 
+        // 场景 A：检查对方是否已经向我发过申请且处于 PENDING 状态（互粉逻辑）
+        ContactApply reverseApply = contactApplyDao.selectByUserIdAndFriendId(contactId, userId);
+        if (reverseApply != null && reverseApply.getStatus() == ContactApplyStatus.PENDING) {
+            // 直接复用处理申请的逻辑，传入“同意”
+            ContactApplyHandleDTO handleDTO = new ContactApplyHandleDTO();
+            handleDTO.setContactId(reverseApply.getId()); // 注意这里是 applyId
+            handleDTO.setAgree(true);
+            return handleApply(userId, handleDTO);
+        }
+
+        // 场景 B：正常申请逻辑
+        ContactApply existingApply = contactApplyDao.selectByUserIdAndFriendId(userId, contactId);
+        Long finalApplyId;
+
         if (existingApply == null) {
-            // --- 插入新记录 ---
             ContactApply newApply = ContactApply.builder()
-                    .userId(userId)
-                    .friendId(contactId)
+                    .userId(userId).friendId(contactId)
                     .status(ContactApplyStatus.PENDING)
-                    .createdTime(now) // 显式设置时间
+                    .createdTime(now)
+                    .isRead(false)
                     .build();
             contactApplyDao.insert(newApply);
-
-            // 获取自增ID
             finalApplyId = newApply.getId();
         } else {
-            // --- 复活旧记录 ---
-            // 只有非 PENDING 状态才更新，避免重复刷新造成骚扰
+            // 如果已存在记录，仅在非 PENDING 状态下更新，防止重复刷
             if (existingApply.getStatus() != ContactApplyStatus.PENDING) {
                 existingApply.setStatus(ContactApplyStatus.PENDING);
-                existingApply.setIsRead(false);    // 重新设为未读
-                existingApply.setCreatedTime(now); // 更新时间顶到最前
+                existingApply.setIsRead(false);
+                existingApply.setCreatedTime(now); // 更新时间以便排在最前
                 contactApplyDao.updateById(existingApply);
             }
             finalApplyId = existingApply.getId();
         }
 
-        // 删除联系人申请缓存 (确保列表查询是最新的)
+        // 清除接收者的申请列表缓存
         redisTemplateUtil.deleteContactApplyCache(contactId);
 
-        // ==========================================
-        // 核心修改：发送 WebSocket 通知 (安全集成)
-        // ==========================================
-
-        // 构建通知对象 (必须使用 effectively final 的变量)
-        ContactApplyNotification notification = ContactApplyNotification.builder()
-                .applyId(finalApplyId)
-                .senderId(userId)
-                .nickname(senderInfo.getNickname())
-                .avatar(senderInfo.getAvatar())
-                .description("请求添加你为好友") // 可扩展为参数传入
-                .createTime(now)
-                .build();
-
-        // 【关键点】注册事务同步回调
-        // 机制：Spring 会把这个 Runnable 挂起，直到前面的数据库事务 commit 成功后才执行
+        // 注册事务回调发送 WebSocket
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
                 try {
-                    // 此时数据库事务已提交，B 用户收到通知后立即调 API 也能查到数据
+                    ContactApplyNotification notification = ContactApplyNotification.builder()
+                            .applyId(finalApplyId)
+                            .senderId(userId)
+                            .nickname(senderInfo.getNickname())
+                            .avatar(senderInfo.getAvatar())
+                            .description("请求添加你为好友")
+                            .createTime(now)
+                            .build();
                     messageService.sendContactApplyNotification(contactId, notification);
                 } catch (Exception e) {
-                    // WebSocket 推送失败不应回滚业务，仅记录日志
-                    // 毕竟申请已经入库了，用户刷新列表也能看到
-                    log.error("好友申请 WebSocket 推送失败: receiverId={}", contactId, e);
+                    log.error("好友申请通知推送失败", e);
                 }
             }
         });
-
         return true;
     }
 
@@ -173,7 +172,7 @@ public class ContactApplyServiceImpl implements ContactApplyService {
      * 获取联系人申请列表【未处理】
      * 优化：解决了 N+1 查询问题
      */
-    @Override // todo 分页获取请求
+    @Override // todo 分页获取请求，redis如何进行分页数据的缓存和获取？
     public List<ContactApplyVO> applyList(Long userId) {
         // 查询所有发给我的申请 (注意：这里 userId 应该是 receiver/friendId)
         // 假设 selectApplyList 的 SQL 逻辑是 WHERE friend_id = #{userId} AND status = #{status}
@@ -219,6 +218,7 @@ public class ContactApplyServiceImpl implements ContactApplyService {
             key = "'lock:contact:handle:' + #dto.contactId", // 支持解析对象属性
             msg = "该申请正在处理中"
     )
+    // todo 插入可以性能优化
     public boolean handleApply(Long userId, ContactApplyHandleDTO dto) {
         // dto.getContactId() 名字可能有歧义，实际应该是 applyId
         Long applyId = dto.getContactId();

@@ -43,14 +43,15 @@ public class ContactController {
         // 获取用户id
         Long userId = (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
         log.info("删除联系人: {}", id);
-        boolean is_deleted = contactService.delete(id, userId);
-        if (is_deleted) {
+        boolean isDeleted = contactService.delete(id, userId);
+        if (isDeleted) {
             return Result.success("删除成功");
         } else {
-            return Result.error(500, "删除失败");
+            return Result.error(400, "删除失败");
         }
     }
 
+    // todo 加上修改备注，标签之类的，或者做其他拓展
     @Operation(summary = "更新联系人")
     @PutMapping("/update")
     public Result<String> update(@RequestBody UpdateContactDTO updateContactDTO) {
@@ -59,5 +60,4 @@ public class ContactController {
         log.info("更新联系人: {}", updateContactDTO);
         return contactService.update(updateContactDTO, userId) ? Result.success("更新成功") : Result.error(500, "更新失败");
     }
-
 }

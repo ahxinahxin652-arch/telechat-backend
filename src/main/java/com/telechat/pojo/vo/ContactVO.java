@@ -22,4 +22,5 @@ public class ContactVO {
     private String nickname;
     private String avatar;
     private String remark;
+    private String bio;
 }
