@@ -5,6 +5,7 @@
  */
 package com.telechat.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.telechat.constant.ExceptionConstant;
 import com.telechat.constant.RedisConstant;
 import com.telechat.exception.exceptions.ContactException;
@@ -21,16 +22,20 @@ import com.telechat.pojo.vo.ContactVO;
 import com.telechat.service.ContactService;
 import com.telechat.util.RedisTemplateUtil;
 import jakarta.annotation.Resource;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 public class ContactServiceImpl implements ContactService {
 
@@ -105,30 +110,51 @@ public class ContactServiceImpl implements ContactService {
     @Transactional(rollbackFor = Exception.class)
     @Override
     public boolean delete(Long id, Long userId) {
-        // 查找联系人是否存在
+        // 1. 获取并校验联系人记录
         Contact contact = contactDao.selectById(id);
         if (contact == null) {
             throw new ContactException(ExceptionConstant.NOT_EXIST_CODE, ExceptionConstant.CONTACT_NOT_EXIST_MSG);
         }
+        // 不能删除别人的联系人
         if (!contact.getUserId().equals(userId)) {
             throw new ContactException(ExceptionConstant.NOT_ALLOWED_CODE, ExceptionConstant.NOT_ALLOWED_MSG);
         }
 
-        // 删除联系人
-        contactDao.delete(contact.getId());
-
-        // 设置会话删除状态
+        // 2. Fail-Fast: 提前校验会话ID，避免走到一半才抛异常回滚
         Long conversationId = contact.getConversationId();
-        if (conversationId != null) {
-            ConversationMember conversationMember = conversationMemberDao.selectByConversationIdAndUserId(conversationId, userId);
-            conversationMember.setDeleted(true);
-            conversationMemberDao.updateById(conversationMember);
-        } else {
+        if (conversationId == null) {
             throw new ContactException(ExceptionConstant.NOT_EXIST_CODE, ExceptionConstant.CONVERSATION_NOT_EXIST_MSG);
         }
 
-        // 用户联系人列表缓存信息失效
-        redisTemplateUtil.deleteContactCache(userId);
+        // 3. 执行删除联系人
+        contactDao.delete(contact.getId());
+
+        // 4. 性能优化：无需 select，直接 update 对应记录的状态
+        ConversationMember conversationMember = ConversationMember.builder()
+                .conversationId(conversationId)
+                .userId(userId)
+                .isDeleted(true)
+                .build();
+        boolean memberUpdated = conversationMemberDao.updateSettings(conversationMember) > 0;
+
+        if (!memberUpdated) {
+            log.warn("Contact delete: Conversation member not found or already deleted. convId: {}, userId: {}", conversationId, userId);
+        }
+
+        // 5. 缓存清理：利用事务同步管理器，确保【数据库事务提交成功后】再清理缓存
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    redisTemplateUtil.deleteContactCache(userId);
+                    // Todo IM 特性：如果集成了 WebSocket，在这里推送一条同步指令给当前用户的各个终端
+                    // webSocketMessageService.sendSyncCommandToUser(userId, "CONTACT_DELETED", id);
+                }
+            });
+        } else {
+            // 如果由于某种原因没有事务，直接删缓存
+            redisTemplateUtil.deleteContactCache(userId);
+        }
 
         return true;
     }

@@ -38,7 +38,7 @@ public class ContactController {
     }
 
     @Operation(summary = "删除联系人")
-    @DeleteMapping("/delete/{id}")
+    @DeleteMapping("/{id}")
     public Result<String> delete(@PathVariable Long id) {
         // 获取用户id
         Long userId = (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
