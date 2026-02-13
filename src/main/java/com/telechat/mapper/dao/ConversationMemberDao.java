@@ -77,4 +77,15 @@ public class ConversationMemberDao {
         // 注意这里第一个参数传 null，完全交给 UpdateWrapper 处理
         return conversationMemberMapper.update(null, updateWrapper);
     }
+
+    /**
+     * 删除会话成员
+     */
+    public int delete(Long conversationId, Long userId) {
+        LambdaQueryWrapper<ConversationMember> queryWrapper = new LambdaQueryWrapper<>();
+        queryWrapper.eq(ConversationMember::getConversationId, conversationId)
+                .eq(ConversationMember::getUserId, userId);
+
+        return conversationMemberMapper.delete(queryWrapper);
+    }
 }

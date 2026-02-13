@@ -130,13 +130,7 @@ public class ContactServiceImpl implements ContactService {
         contactDao.delete(contact.getId());
 
         // 4. 性能优化：无需 select，直接 update 对应记录的状态
-        ConversationMember conversationMember = ConversationMember.builder()
-                .conversationId(conversationId)
-                .userId(userId)
-                .isDeleted(true)
-                .build();
-        boolean memberUpdated = conversationMemberDao.updateSettings(conversationMember) > 0;
-
+        boolean memberUpdated = conversationMemberDao.delete(conversationId, userId) > 0;
         if (!memberUpdated) {
             log.warn("Contact delete: Conversation member not found or already deleted. convId: {}, userId: {}", conversationId, userId);
         }
