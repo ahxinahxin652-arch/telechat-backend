@@ -23,7 +23,11 @@ public class RedisConstant {
     public static final String USER_CONTACTS_INFO = "user:contacts:";
     public static final Long USER_CONTACTS_INFO_DURATION = 30L; //30min
 
-    // 用户联系人申请缓存
+    // 用户联系人申请信息缓存
     public static final String USER_CONTACTS_APPLY = "user:contactApplies:";
     public static final Long USER_CONTACT_APPLIES_DURATION = 60L;
+
+    // 用户会话信息缓存
+    public static final String USER_CONVERSATION = "user:conversation:";
+    public static final Long USER_CONVERSATION_DURATION = 30L;
 }
