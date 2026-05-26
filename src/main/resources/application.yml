@@ -1,0 +1,114 @@
+server:
+  port: 8888
+
+spring:
+  #--------------------------------
+  profiles:
+    active: dev
+  #--------------------------------
+  main:
+    allow-circular-references: true
+  #--------------------------------
+  datasource:
+    druid:
+      driver-class-name: ${telechat.datasource.driver-class-name}
+      url: jdbc:mysql://${telechat.datasource.host}:${telechat.datasource.port}/${telechat.datasource.database}?serverTimezone=Asia/Shanghai&useUnicode=true&characterEncoding=utf-8&zeroDateTimeBehavior=convertToNull&useSSL=false&allowPublicKeyRetrieval=true
+      username: ${telechat.datasource.username}
+      password: ${telechat.datasource.password}
+  #--------------------------------
+  data:
+    redis:
+      host: ${telechat.redis.host}
+      port: ${telechat.redis.port}
+      database: ${telechat.redis.database}
+  #--------------------------------
+  rabbitmq:
+    host: ${telechat.rabbitmq.host}
+    port: ${telechat.rabbitmq.port}
+    username: ${telechat.rabbitmq.username}
+    password: ${telechat.rabbitmq.password}
+    # 连接
+    connection-timeout: 3000ms # 连接超时设大一点，防止细小的网络波动导致连接断开
+    template:
+      retry:
+        enabled: true # 失败重连机制（会阻塞线程）
+        multiplier: 1 # 重试后连接超时倍数
+        max-attempts: 3 # 重试次数
+    # 发送消息
+    publisher-confirm-type: correlated # 异步回调确认消息发送成功
+    publisher-returns: true # 路由失败发送回执
+    # 监听消息
+    listener:
+      simple:
+        prefetch: 50 # 预取20条，减少网络等待，增加消息处理效率（能者处理得快，多拿消息），提高吞吐量
+        acknowledge-mode: auto # none:关闭ack, manual:手动ack(ack/nack/reject), auto:自动ack(业务异常返回nack【进行重试】，消息处理或校验异常返回reject【直接删除消息】)
+        retry: # 失败重试相关机制（失败后本地重试，而不是requeue到mq中。本地失败3次后，丢入死信队列人工处理）
+          enabled: true # 开启消费者失败重试
+          initial-interval: 1000ms # 初始的失败等待时间为1秒
+          multiplier: 2 # 下次失败的等待时长倍数。设为2，实现退避重试
+          max-attempts: 3 # 最大重试次数
+          stateless: true # true无状态，false有状态。如果业务中包含事务，这里改为false
+
+  #--------------------------------
+  mail:
+    host: ${telechat.mail.host}
+    port: ${telechat.mail.port}
+    username: ${telechat.mail.username}
+    password: ${telechat.mail.password}
+    from: ${telechat.mail.from}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          ssl:
+            enable: true  # 用于 465 端口
+  #---------------------------------
+  mvc:
+    pathmatch:
+      matching-strategy: ant_path_matcher
+  #---------------------------------
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
+
+
+mybatis:
+  #mapper配置文件
+  mapper-locations: classpath:mapper/*.xml
+  type-aliases-package: com.telechat.pojo.entity
+  configuration:
+    #开启驼峰命名
+    map-underscore-to-camel-case: true
+
+
+#开启日志
+logging:
+  level:
+    com:
+      telechat:
+        mapper: debug
+        service: info
+        controller: info
+
+
+knife4j:
+  enable: true
+  production: false
+
+
+telechat:
+  alioss:
+    endpoint: ${telechat.alioss.endpoint}
+    access-key-id: ${telechat.alioss.access-key-id}
+    access-key-secret: ${telechat.alioss.access-key-secret}
+    bucket-name: ${telechat.alioss.bucket-name}
+
+  wechat:
+    appid: ${telechat.wechat.appid}
+    secret: ${telechat.wechat.secret}
+
+  jwt:
+    secret: ${telechat.jwt.secret}
+    expiration: ${telechat.jwt.expiration}
+

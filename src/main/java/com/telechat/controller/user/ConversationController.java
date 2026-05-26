@@ -1,0 +1,88 @@
+package com.telechat.controller.user;
+
+import com.telechat.pojo.dto.conversation.CreateGroupDTO;
+import com.telechat.pojo.result.Result;
+import com.telechat.pojo.vo.ConversationVO;
+import com.telechat.service.ConversationService;
+import com.telechat.util.RedisTemplateUtil;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.annotation.Resource;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+@RestController
+@RequestMapping("/conversation")
+@Tag(name = "会话接口")
+@Slf4j
+public class ConversationController {
+    // service
+    @Resource
+    private ConversationService conversationService;
+
+    /**
+     * 预热会话数据
+     * param userId
+     * @return boolean
+     */
+    @Operation(summary = "预热会话列表数据ZSet")
+    @GetMapping("/preHeat")
+    public Result<Boolean> preHeatConversations() {
+        // 从Security上下文中获取用户ID
+        Long userId = (Long) SecurityContextHolder.getContext()
+                .getAuthentication().getPrincipal();
+
+        return Result.success(conversationService.preHeatConversationZSets(userId));
+    }
+
+    /**
+     * 懒加载会话
+     * param cursor 游标
+     * @return boolean
+     */
+    @Operation(summary = "懒加载会话")
+    @GetMapping("/lazyLoad")
+    public Result<List<ConversationVO>> lazyLoadConversations(Double cursor) {
+        // 从Security上下文中获取用户ID
+        Long userId = (Long) SecurityContextHolder.getContext()
+                .getAuthentication().getPrincipal();
+
+        List<ConversationVO> conversationVOS = conversationService.lazyLoadConversations(userId, cursor);
+        return Result.success(conversationVOS);
+    }
+
+    /**
+     * 创建群聊会话
+     * param cursor 游标
+     * @return boolean
+     */
+    @Operation(summary = "创建群聊会话")
+    @PostMapping("/createGroup")
+    public Result<ConversationVO> createGroup(@RequestBody CreateGroupDTO createGroupDTO) {
+        // 从Security上下文中获取用户ID
+        Long userId = (Long) SecurityContextHolder.getContext()
+                .getAuthentication().getPrincipal();
+
+        ConversationVO conversationVO =  conversationService.createGroup(userId, createGroupDTO.getMemberIds());
+        return Result.success(conversationVO);
+    }
+
+    /**
+     * 获取单个群聊信息
+     * param
+     * @return 群聊信息
+     */
+    @Operation(summary = "获取单个群聊信息")
+    @GetMapping("/{id}")
+    public Result<ConversationVO> getConversationInfo(@PathVariable("id") Long conversationId) {
+        // 从Security上下文中获取用户ID
+        Long userId = (Long) SecurityContextHolder.getContext()
+                .getAuthentication().getPrincipal();
+
+        ConversationVO conversationVO = conversationService.getConversationInfo(userId ,conversationId);
+        return Result.success(conversationVO);
+    }
+}

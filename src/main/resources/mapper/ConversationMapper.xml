@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd" >
+<mapper namespace="com.telechat.mapper.ConversationMapper">
+
+    <select id="selectConversationIdsByUserId" resultType="com.telechat.cache.entity.ConversationZSetCache">
+        SELECT
+            cm.conversation_id,
+            c.last_message_time,
+            cm.is_toped
+        FROM conversation_member cm
+        LEFT JOIN conversation c ON cm.conversation_id = c.id
+        WHERE cm.user_id = #{userId}
+        AND cm.is_deleted = 0
+        ORDER BY cm.is_toped DESC, c.last_message_time DESC
+        LIMIT #{preHeatCount}; -- 先查前200个
+    </select>
+
+    <select id="selectOlderConversations" resultType="com.telechat.cache.entity.ConversationZSetCache">
+        SELECT
+            m.conversation_id AS conversationId,
+            m.is_toped AS isToped,
+            c.last_message_time AS lastMessageTime
+        FROM conversation_member m
+                 JOIN conversation c ON m.conversation_id = c.id
+        WHERE m.user_id = #{userId}
+          AND (
+            -- 情况A：如果上一条是置顶的 (lastIsToped = 1)
+            -- 那么我们可以取：同为置顶且时间更早的，或者 任何非置顶的 (is_toped = 0)
+            (#{lastIsToped} = 1 AND (
+                (m.is_toped = 1 AND c.last_message_time &lt; #{lastTime})
+                    OR
+                (m.is_toped = 0)
+                ))
+                OR
+                -- 情况B：如果上一条是非置顶的 (lastIsToped = 0)
+                -- 那么我们只能取：非置顶且时间更早的
+            (#{lastIsToped} = 0 AND (
+                m.is_toped = 0 AND c.last_message_time &lt; #{lastTime}
+                ))
+            )
+        ORDER BY m.is_toped DESC, c.last_message_time DESC
+            LIMIT #{limit}
+    </select>
+</mapper>
