@@ -6,6 +6,7 @@
 package com.telechat.mapper.dao;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.telechat.mapper.ConversationMapper;
 import com.telechat.cache.entity.ConversationZSetCache;
 import com.telechat.pojo.entity.Conversation;
@@ -87,5 +88,14 @@ public class ConversationDao {
             return Collections.emptyList();
         }
         return conversationMapper.selectBatchIds(conversationIds);
+    }
+
+    /**
+     * 更新会话
+     *
+     * @param conversation 会话
+     */
+    public void update(Conversation conversation) {
+        conversationMapper.updateById(conversation);
     }
 }

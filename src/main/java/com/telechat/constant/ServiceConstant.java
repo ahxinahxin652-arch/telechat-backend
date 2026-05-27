@@ -2,7 +2,7 @@ package com.telechat.constant;
 
 public class ServiceConstant {
     // 预热会话列表200条
-    public final static Integer PREHEAT_COUNT = 200;
+    public final static Integer PREHEAT_COUNT = 40;
 
     // 默认每次懒加载20条会话
     public final static Integer LOAD_CONVERSATION_COUNT = 20;

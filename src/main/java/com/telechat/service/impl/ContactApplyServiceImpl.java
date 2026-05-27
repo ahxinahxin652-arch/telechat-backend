@@ -294,9 +294,13 @@ public class ContactApplyServiceImpl implements ContactApplyService {
                     .build();
             conversationDao.insert(conversation);
         }
-        // 存在，复用
+        // 存在，复用（需要更新状态）
         else{
+            oldConversation.setCreatedTime(now);
+            oldConversation.setUpdatedTime(now);
+            oldConversation.setLastMessageTime(now);
             conversation = oldConversation;
+            conversationDao.update(conversation);
         }
 
         // 3.3 建立双向好友关系 (A->B 和 B->A) 已防止数据重复
