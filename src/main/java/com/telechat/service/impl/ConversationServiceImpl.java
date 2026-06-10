@@ -425,4 +425,116 @@ public class ConversationServiceImpl implements ConversationService {
         return conversationVO;
     }
 
+    @Override
+    public void topConversation(Long userId, Long conversationId, Boolean isTop) {
+        ConversationMember member = new ConversationMember();
+        member.setUserId(userId);
+        member.setConversationId(conversationId);
+        member.setToped(isTop);
+        conversationMemberDao.updateSettings(member);
+
+        String zsetKey = RedisConstant.USER_CONVERSATIONS_ZSET + userId;
+        Double score = redisTemplate.opsForZSet().score(zsetKey, String.valueOf(conversationId));
+        if (score != null) {
+            if (isTop) {
+                if (score < ServiceConstant.TOP_SCORE_OFFSET) {
+                    redisTemplate.opsForZSet().add(zsetKey, String.valueOf(conversationId), score + ServiceConstant.TOP_SCORE_OFFSET);
+                }
+            } else {
+                if (score >= ServiceConstant.TOP_SCORE_OFFSET) {
+                    redisTemplate.opsForZSet().add(zsetKey, String.valueOf(conversationId), score - ServiceConstant.TOP_SCORE_OFFSET);
+                }
+            }
+        }
+        redisTemplate.opsForHash().delete(RedisConstant.USER_CONVERSATION_MEMBER + userId, String.valueOf(conversationId));
+    }
+
+    @Override
+    public void muteConversation(Long userId, Long conversationId, Boolean isMuted) {
+        ConversationMember member = new ConversationMember();
+        member.setUserId(userId);
+        member.setConversationId(conversationId);
+        member.setMuted(isMuted);
+        conversationMemberDao.updateSettings(member);
+
+        redisTemplate.opsForHash().delete(RedisConstant.USER_CONVERSATION_MEMBER + userId, String.valueOf(conversationId));
+    }
+
+    @Override
+    public void deleteConversation(Long userId, Long conversationId) {
+        ConversationMember member = new ConversationMember();
+        member.setUserId(userId);
+        member.setConversationId(conversationId);
+        member.setDeleted(true);
+        conversationMemberDao.updateSettings(member);
+
+        conversationCacheService.removeConversationFromZSetSafe(userId, conversationId);
+        redisTemplate.opsForHash().delete(RedisConstant.USER_CONVERSATION_MEMBER + userId, String.valueOf(conversationId));
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    @Override
+    public void exitGroup(Long userId, Long conversationId) {
+        Conversation conversation = conversationDao.selectById(conversationId);
+        if (conversation == null || !ConversationType.GROUP.equals(conversation.getType())) {
+            throw new ConversationException(ExceptionConstant.Judge_Query_Exception_Code, "该会话不存在或不是群聊");
+        }
+        if (userId.equals(conversation.getOwnerId())) {
+            throw new ConversationException(ExceptionConstant.Judge_Query_Exception_Code, "群主只能解散群聊，不能直接退出");
+        }
+
+        // 1. DB: 删除该用户的群成员记录
+        conversationMemberDao.delete(conversationId, userId);
+
+        // 2. Redis: 清理用户的会话 ZSet、个人状态 Hash、群成员 Hash
+        conversationCacheService.removeConversationFromZSetSafe(userId, conversationId);
+        redisTemplate.opsForHash().delete(RedisConstant.USER_CONVERSATION_MEMBER + userId, String.valueOf(conversationId));
+        redisTemplate.opsForHash().delete(RedisConstant.CONVERSATION_GROUP_MEMBER + conversationId, String.valueOf(userId));
+
+        // 3. MQ: 事务提交后通知群内其他成员 ("xxx 退出了群聊")
+        AfterCommitUtil.executeAfterCommit(() -> {
+            ContactConversationEvent event = ContactConversationEvent.builder()
+                    .contactConversationType(ContactConversationType.GROUP_REMOVE)
+                    .senderId(userId)
+                    .conversationVO(ConversationVO.builder().id(conversationId).build())
+                    .description("退出了群聊")
+                    .timestamp(System.currentTimeMillis())
+                    .build();
+            contactConversationEventPublisher.publishContactConversationEvent(event);
+        });
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    @Override
+    public void disbandGroup(Long userId, Long conversationId) {
+        Conversation conversation = conversationDao.selectById(conversationId);
+        if (conversation == null || !ConversationType.GROUP.equals(conversation.getType())) {
+            throw new ConversationException(ExceptionConstant.Judge_Query_Exception_Code, "该会话不存在或不是群聊");
+        }
+        if (!userId.equals(conversation.getOwnerId())) {
+            throw new ConversationException(ExceptionConstant.Judge_Query_Exception_Code, "权限不足，只有群主可以解散群聊");
+        }
+
+        // 1. DB: 将会话状态置为"已解散"
+        conversation.setStatus(ConversationStatus.DISBANDED);
+        conversationDao.update(conversation);
+
+        // 2. Redis: 清除全局静态缓存 + 全局动态缓存 + 群成员缓存
+        redisTemplate.delete(RedisConstant.CONVERSATION_STATIC_INFO + conversationId);
+        redisTemplate.delete(RedisConstant.CONVERSATION_META_INFO + conversationId);
+        redisTemplate.delete(RedisConstant.CONVERSATION_GROUP_MEMBER + conversationId);
+
+        // 3. MQ: 事务提交后通知所有群成员 ("群聊已解散")
+        AfterCommitUtil.executeAfterCommit(() -> {
+            ContactConversationEvent event = ContactConversationEvent.builder()
+                    .contactConversationType(ContactConversationType.GROUP_DISBAND)
+                    .senderId(userId)
+                    .conversationVO(ConversationVO.builder().id(conversationId).build())
+                    .description("群聊已解散")
+                    .timestamp(System.currentTimeMillis())
+                    .build();
+            contactConversationEventPublisher.publishContactConversationEvent(event);
+        });
+    }
 }
+

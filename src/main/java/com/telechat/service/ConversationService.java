@@ -44,4 +44,29 @@ public interface ConversationService {
      * @return ConversationVO 创建的群聊返回视图
      */
     ConversationVO createGroup(Long userId, Collection<Long> memberIds);
+
+    /**
+     * 置顶/取消置顶会话
+     */
+    void topConversation(Long userId, Long conversationId, Boolean isTop);
+
+    /**
+     * 会话免打扰
+     */
+    void muteConversation(Long userId, Long conversationId, Boolean isMuted);
+
+    /**
+     * 删除/隐藏会话
+     */
+    void deleteConversation(Long userId, Long conversationId);
+
+    /**
+     * 退出群聊
+     */
+    void exitGroup(Long userId, Long conversationId);
+
+    /**
+     * 解散群聊 (仅群主)
+     */
+    void disbandGroup(Long userId, Long conversationId);
 }

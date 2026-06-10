@@ -85,4 +85,44 @@ public class ConversationController {
         ConversationVO conversationVO = conversationService.getConversationInfo(userId ,conversationId);
         return Result.success(conversationVO);
     }
+
+    @Operation(summary = "置顶/取消置顶会话")
+    @PutMapping("/{id}/top")
+    public Result<Void> topConversation(@PathVariable("id") Long conversationId, @RequestParam("isTop") Boolean isTop) {
+        Long userId = (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        conversationService.topConversation(userId, conversationId, isTop);
+        return Result.success();
+    }
+
+    @Operation(summary = "设置会话免打扰")
+    @PutMapping("/{id}/mute")
+    public Result<Void> muteConversation(@PathVariable("id") Long conversationId, @RequestParam("isMuted") Boolean isMuted) {
+        Long userId = (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        conversationService.muteConversation(userId, conversationId, isMuted);
+        return Result.success();
+    }
+
+    @Operation(summary = "隐藏/删除会话")
+    @DeleteMapping("/{id}")
+    public Result<Void> deleteConversation(@PathVariable("id") Long conversationId) {
+        Long userId = (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        conversationService.deleteConversation(userId, conversationId);
+        return Result.success();
+    }
+
+    @Operation(summary = "退出群聊")
+    @DeleteMapping("/{id}/exit")
+    public Result<Void> exitGroup(@PathVariable("id") Long conversationId) {
+        Long userId = (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        conversationService.exitGroup(userId, conversationId);
+        return Result.success();
+    }
+
+    @Operation(summary = "解散群聊")
+    @DeleteMapping("/{id}/disband")
+    public Result<Void> disbandGroup(@PathVariable("id") Long conversationId) {
+        Long userId = (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        conversationService.disbandGroup(userId, conversationId);
+        return Result.success();
+    }
 }
