@@ -35,7 +35,6 @@ import com.telechat.pojo.vo.ConversationVO;
 import com.telechat.service.ConversationService;
 import com.telechat.util.SnowflakeIdGenerator;
 import org.redisson.api.RedissonClient;
-import org.springframework.data.redis.core.DefaultTypedTuple;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.stereotype.Service;
@@ -138,7 +137,6 @@ public class ConversationServiceImpl implements ConversationService {
 
         // 【优化 1：使用 LinkedHashMap】完美保留 ZSet 顺序，同时存储 Score！
         LinkedHashMap<Long, Double> idScoreMap = new LinkedHashMap<>();
-        boolean hitSentinel = false; // 缓存哨兵命中标记
 
         // 从 Redis ZSet 中按 Score 倒序获取
         Set<ZSetOperations.TypedTuple<Object>> tuples = redisTemplate.opsForZSet()
@@ -153,12 +151,6 @@ public class ConversationServiceImpl implements ConversationService {
 
                 String val = valueObj.toString();
 
-                // 判断是否遇到防穿透哨兵值 "-1"
-                if ("-1".equals(val)) {
-                    hitSentinel = true;
-                    break; // 遇到哨兵，说明后面彻底没数据了，提前终止
-                }
-
                 Long cid = Long.valueOf(val);
                 Double score = tuple.getScore();
                 idScoreMap.put(cid, score); // 存入有序 Map
@@ -170,7 +162,7 @@ public class ConversationServiceImpl implements ConversationService {
         int remainNeed = ServiceConstant.LOAD_CONVERSATION_COUNT - idScoreMap.size();
         boolean newlyHitBottom = false; // 标记本次 DB 查询是否刚刚触底
 
-        if (remainNeed > 0 && !hitSentinel) {
+        if (remainNeed > 0) {
             // 去数据库查询更老的会话数据
             boolean lastIsToped = lastScoreFetchFromRedis >= ServiceConstant.TOP_SCORE_OFFSET;
             long lastTimestamp = (long) (lastIsToped ? (lastScoreFetchFromRedis - ServiceConstant.TOP_SCORE_OFFSET) : lastScoreFetchFromRedis);
@@ -178,48 +170,33 @@ public class ConversationServiceImpl implements ConversationService {
 
             List<ConversationZSetCache> dbList = conversationDao.selectOlderConversations(userId, lastIsToped, lastTime, remainNeed);
 
-            Set<ZSetOperations.TypedTuple<Object>> newZsetTuples = new HashSet<>();
-
             if (!CollectionUtils.isEmpty(dbList)) {
                 for (ConversationZSetCache item : dbList) {
-                    // 【提取公共逻辑】一次计算，两处使用 (存入 Map 给前端，存入 Set 写缓存)
                     double score = item.getLastMessageTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
                     if (item.isToped()) {
                         score += ServiceConstant.TOP_SCORE_OFFSET;
                     }
 
                     idScoreMap.put(item.getConversationId(), score); // 追加到有序 Map 尾部
-                    newZsetTuples.add(new DefaultTypedTuple<>(String.valueOf(item.getConversationId()), score));
                 }
             }
 
-            // 【优化点：减少 hasKey 网络 I/O】
+            // 缓存断层检测：ZSet Key 已失效，异步重建
             boolean hasKey = !CollectionUtils.isEmpty(tuples) || Boolean.TRUE.equals(redisTemplate.hasKey(zsetKey));
-
             if (!hasKey) {
-                // 【场景 A：缓存已死】绝对禁止局部更新，丢给异步线程全量重建
                 log.warn("用户 {} 懒加载时缓存断层，触发异步预热，本次仅穿透DB", userId);
                 CompletableFuture.runAsync(() -> preHeatConversationZSets(userId), preHeatExecutor);
-            } else {
-                // 【场景 B：缓存存活】连续滑动，追加冷数据
-                if (!newZsetTuples.isEmpty()) {
-                    redisTemplate.opsForZSet().add(zsetKey, newZsetTuples);
-                    // 容量截断：移除 rank 排名最靠后的元素，防止 ZSet 无限膨胀
-                    redisTemplate.opsForZSet().removeRange(zsetKey, 0, -(ServiceConstant.PREHEAT_COUNT + 1));
-                }
+            }
 
-                // 【终点标记】：DB 数据不够了，说明触底，写入哨兵
-                if (CollectionUtils.isEmpty(dbList) || dbList.size() < remainNeed) {
-                    log.info("用户 {} 懒加载触底，写入 ZSet 哨兵", userId);
-                    redisTemplate.opsForZSet().add(zsetKey, "-1", 0.0);
-                    newlyHitBottom = true;
-                }
+            // 触底判断：DB 返回的数据不足一页，说明到底了
+            if (CollectionUtils.isEmpty(dbList) || dbList.size() < remainNeed) {
+                newlyHitBottom = true;
             }
         }
 
         // 极端情况：连第一页都没数据，且刚查完 DB 发现触底
         if (idScoreMap.isEmpty()) {
-            if (hitSentinel || newlyHitBottom) {
+            if (newlyHitBottom) {
                 // 返回哨兵给前端，让前端关闭 loading 状态
                 return Collections.singletonList(ConversationVO.builder().id(-1L).build());
             }
@@ -280,7 +257,7 @@ public class ConversationServiceImpl implements ConversationService {
         // 【关键修复：向前端传递触底信号】
         // 对应你前端 Pinia 的判断: const sentinelIndex = newData.findIndex(item => item.id === "-1");
         // (假设 Long 型 ID 在全局配置了 toString 序列化给前端防精度丢失，此处 -1L 到前端会变成 "-1")
-        if (hitSentinel || newlyHitBottom) {
+        if (newlyHitBottom) {
             resultList.add(ConversationVO.builder().id(-1L).build());
         }
 
