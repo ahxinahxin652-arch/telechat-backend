@@ -61,6 +61,12 @@ public class ConversationServiceImpl implements ConversationService {
     @Resource
     private ChatMessageDao chatMessageDao;
 
+    @Resource
+    private com.telechat.service.ChatMessageService chatMessageService;
+
+    @Resource
+    private com.telechat.service.UserDeviceSyncService userDeviceSyncService;
+
     // mq
     @Resource
     private ContactConversationEventPublisher contactConversationEventPublisher;
@@ -272,16 +278,22 @@ public class ConversationServiceImpl implements ConversationService {
     // }
 
     @Override
-    public ConversationSyncVO syncConversations(Long userId, Long lastSyncTime) {
-        if (userId == null || lastSyncTime == null) {
-            throw new ConversationException(ExceptionConstant.Judge_Query_Exception_Code, ExceptionConstant.Judge_Query_Exception_MSG);
+    public ConversationSyncVO syncConversations(Long userId, String deviceId) {
+        if (userId == null || deviceId == null || deviceId.isEmpty()) {
+            throw new ConversationException(ExceptionConstant.Judge_Query_Exception_Code, "参数错误或缺少deviceId");
         }
 
+        // 获取设备的 lastSyncTime
+        com.telechat.pojo.entity.UserDeviceSync deviceSync = userDeviceSyncService
+                .getOne(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<com.telechat.pojo.entity.UserDeviceSync>()
+                        .eq(com.telechat.pojo.entity.UserDeviceSync::getUserId, userId)
+                        .eq(com.telechat.pojo.entity.UserDeviceSync::getDeviceId, deviceId));
+
         LocalDateTime syncTime;
-        if (lastSyncTime == 0) {
+        if (deviceSync == null || deviceSync.getLastSyncTime() == null) {
             syncTime = LocalDateTime.ofEpochSecond(0, 0, ZoneOffset.UTC);
         } else {
-            syncTime = LocalDateTime.ofInstant(Instant.ofEpochMilli(lastSyncTime), ZoneId.systemDefault());
+            syncTime = deviceSync.getLastSyncTime();
         }
 
         // 1. 查询会话状态增量（包含新增好友、群聊状态变更等）
@@ -315,6 +327,12 @@ public class ConversationServiceImpl implements ConversationService {
                     messagesMap.put(entry.getKey(), msgs);
                 }
             }
+        }
+
+        // 更新设备的 lastSyncTime (取当前服务器时间，防止时钟差异)
+        if (deviceSync != null) {
+            deviceSync.setLastSyncTime(LocalDateTime.now());
+            userDeviceSyncService.updateById(deviceSync);
         }
 
         return ConversationSyncVO.builder()
@@ -438,6 +456,9 @@ public class ConversationServiceImpl implements ConversationService {
         // 分批批量插入会话成员
         conversationMemberDao.insertBatch(members);
 
+        // 插入群聊创建的系统消息
+        chatMessageService.sendMessage(userId, conversationId, MessageConstant.GROUP_CREATE_MESSAGE, 100);
+
         double score = now.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
 
         ConversationVO conversationVO = ConversationVO.builder()
@@ -448,6 +469,7 @@ public class ConversationServiceImpl implements ConversationService {
                 .unreadCount(0)
                 .isTop(false)
                 .isMuted(false)
+                .seqId(1L)
                 .lastMessageContent(MessageConstant.GROUP_CREATE_MESSAGE)
                 .lastMessageTime(now)
                 .score(score)
@@ -468,19 +490,35 @@ public class ConversationServiceImpl implements ConversationService {
 
             // 发送消息队列(不需要发给创建者)
             allMemberIds.remove(userId);
+            
+            // 为被邀请的成员构建独立的 VO，并将未读数修改为 1
+            ConversationVO voForMembers = ConversationVO.builder()
+                    .id(conversationVO.getId())
+                    .type(conversationVO.getType())
+                    .title(conversationVO.getTitle())
+                    .avatar(conversationVO.getAvatar())
+                    .unreadCount(1)
+                    .isTop(conversationVO.getIsTop())
+                    .isMuted(conversationVO.getIsMuted())
+                    .seqId(conversationVO.getSeqId())
+                    .lastMessageContent(conversationVO.getLastMessageContent())
+                    .lastMessageTime(conversationVO.getLastMessageTime())
+                    .score(conversationVO.getScore())
+                    .build();
+            
             // 构建创建群聊消息
             ContactConversationEvent event = ContactConversationEvent.builder()
                     .contactConversationType(ContactConversationType.GROUP_CREATE)
                     .senderId(userId)
                     .allReceiverIds(allMemberIds)
-                    .conversationVO(conversationVO)
+                    .conversationVO(voForMembers)
                     .description("邀请你加入群聊")
                     .timestamp(System.currentTimeMillis())
                     .build();
             contactConversationEventPublisher.publishContactConversationEvent(event);
         });
 
-        // 返回ConversationVO
+        // 返回ConversationVO (unreadCount 仍为 0)
         return conversationVO;
     }
 
@@ -535,6 +573,9 @@ public class ConversationServiceImpl implements ConversationService {
         // 1. DB: 删除该用户的群成员记录
         conversationMemberDao.delete(conversationId, userId);
 
+        // 发送退群系统消息
+        chatMessageService.sendMessage(userId, conversationId, "退出了群聊", 100);
+
         // 2. Redis: 仅清理个人状态 Hash、群成员 Hash
         // conversationCacheService.removeConversationFromZSetSafe(userId, conversationId);
         // redisTemplate.opsForHash().delete(RedisConstant.USER_CONVERSATION_MEMBER + userId, String.valueOf(conversationId));
@@ -567,6 +608,9 @@ public class ConversationServiceImpl implements ConversationService {
         // 1. DB: 将会话状态置为"已解散"
         conversation.setStatus(ConversationStatus.DISBANDED);
         conversationDao.update(conversation);
+
+        // 发送解散群聊系统消息
+        chatMessageService.sendMessage(userId, conversationId, "群聊已解散", 100);
 
         // 2. Redis: 清除全局静态缓存 + 全局动态缓存 + 群成员缓存
         redisTemplate.delete(RedisConstant.CONVERSATION_STATIC_INFO + conversationId);

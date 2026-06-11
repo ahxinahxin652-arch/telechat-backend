@@ -12,6 +12,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.*;
+import com.telechat.service.UserDeviceSyncService;
 
 import java.io.IOException;
 import java.util.concurrent.ConcurrentHashMap;
@@ -34,6 +35,9 @@ public class TelechatWebSocketHandler implements WebSocketHandler {
 
     @Resource
     private SnowflakeIdGenerator snowflakeIdGenerator;
+
+    @Resource
+    private UserDeviceSyncService userDeviceSyncService;
 
     @Override
     public void afterConnectionEstablished(@NonNull WebSocketSession session) throws Exception {
@@ -84,8 +88,10 @@ public class TelechatWebSocketHandler implements WebSocketHandler {
             if (WsMessageType.TYPING.getValue().equals(typeStr)) {
                 handleTypingMessage(userId, rootNode);
             }
-            // 扩展：处理客户端发来的 ACK 确认消息等
-            // else if ("ack".equals(typeStr)) { ... }
+            // 3. 处理客户端发来的 ACK 确认消息
+            else if (WsMessageType.ACK.getValue().equals(typeStr)) {
+                handleAckMessage(userId, rootNode);
+            }
 
         } catch (Exception e) {
             log.error("用户 [{}] 消息处理异常, payload: {}", userId, payload, e);
@@ -115,6 +121,26 @@ public class TelechatWebSocketHandler implements WebSocketHandler {
             sendMessageToSessionSafely(session, pongNode.toString());
         } catch (Exception e) {
             log.error("响应心跳包失败", e);
+        }
+    }
+
+    /**
+     * 处理客户端的游标 ACK 包
+     */
+    private void handleAckMessage(Long userId, JsonNode rootNode) {
+        try {
+            JsonNode dataNode = rootNode.path("data");
+            if (!dataNode.isMissingNode()) {
+                String deviceId = dataNode.path("deviceId").asText();
+                long syncTimeMillis = dataNode.path("syncTime").asLong();
+                if (deviceId != null && !deviceId.isEmpty() && syncTimeMillis > 0) {
+                    java.time.LocalDateTime syncTime = java.time.LocalDateTime.ofInstant(
+                            java.time.Instant.ofEpochMilli(syncTimeMillis), java.time.ZoneId.systemDefault());
+                    userDeviceSyncService.updateSyncCursorInRedis(userId, deviceId, syncTime);
+                }
+            }
+        } catch (Exception e) {
+            log.error("用户 [{}] 处理 ACK 异常", userId, e);
         }
     }
 
@@ -243,6 +269,12 @@ public class TelechatWebSocketHandler implements WebSocketHandler {
         Long userId = getUserId(session);
         if (userId != null) {
             userSessions.remove(userId);
+            // 这里可以触发一次强制刷盘，保证离线时游标立刻落库，避免 Redis 和 MySQL 产生窗口期差异
+            try {
+                userDeviceSyncService.flushRedisCursorsToDb();
+            } catch (Exception e) {
+                log.error("触发游标落库失败", e);
+            }
         }
         try {
             if (session.isOpen()) {

@@ -46,6 +46,18 @@ public class ConversationMemberDao {
     }
 
     /**
+     * 根据会话ID查询所有会话成员
+     *
+     * @param conversationId 会话ID
+     * @return List<ConversationMember>
+     */
+    public List<ConversationMember> selectMembersByConversationId(Long conversationId) {
+        LambdaQueryWrapper<ConversationMember> queryWrapper = new LambdaQueryWrapper<>();
+        queryWrapper.eq(ConversationMember::getConversationId, conversationId);
+        return conversationMemberMapper.selectList(queryWrapper);
+    }
+
+    /**
      * 根据会话ID更新会话成员
      *
      * @param conversationMember 会话

@@ -16,4 +16,8 @@ public class LoginDTO {
     private String identifyType;
     private String identifier;
     private String verifyCode;
+    
+    // 多端同步参数
+    private String deviceId;
+    private Byte clientType; // 1-Web, 2-Desktop, 3-Mobile
 }

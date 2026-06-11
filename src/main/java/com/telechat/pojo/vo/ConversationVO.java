@@ -32,6 +32,8 @@ public class ConversationVO {
     private Boolean isTop;
     // 是否免打扰
     private Boolean isMuted;
+    // 最新消息的 seq_id
+    private Long seqId;
     // 最新消息内容（用于列表预览）
     private String lastMessageContent;
     // 最新消息时间

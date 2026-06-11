@@ -13,4 +13,12 @@ public interface ChatMessageService {
      * @return ChatMessage
      */
     ChatMessage sendMessage(Long senderId, Long conversationId, String content, Integer messageType);
+    /**
+     * 更新会话的已读游标
+     *
+     * @param userId         用户ID
+     * @param conversationId 会话ID
+     * @param seqId          已读的最大seqId
+     */
+    void markMessageAsRead(Long userId, Long conversationId, Long seqId);
 }

@@ -13,6 +13,7 @@ public enum WsMessageType {
     ERROR("error"),             // 错误提示
     PING("ping"),
     PONG("pong"),
+    ACK("ack"),
 
     // 业务类型
 

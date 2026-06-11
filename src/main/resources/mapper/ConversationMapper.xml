@@ -66,10 +66,15 @@
             cm.is_toped AS isTop,
             cm.is_muted AS isMuted,
             (
+                SELECT max(seq_id)
+                FROM chat_message m
+                WHERE m.conversation_id = c.id
+            ) AS seqId,
+            (
                 SELECT count(*)
                 FROM chat_message m
                 WHERE m.conversation_id = c.id
-                  AND m.id > IFNULL(cm.last_read_message_id, 0)
+                  AND m.seq_id > IFNULL(cm.last_read_message_id, 0)
             ) AS unreadCount
         FROM conversation c
         INNER JOIN conversation_member cm ON c.id = cm.conversation_id

@@ -19,8 +19,10 @@ import com.telechat.pojo.entity.User;
 import com.telechat.pojo.entity.UserAuths;
 import com.telechat.security.JwtTokenProvider;
 import com.telechat.service.UserAuthsService;
+import com.telechat.service.UserDeviceSyncService;
 import com.telechat.util.SnowflakeIdGenerator;
 import jakarta.annotation.Resource;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -45,6 +47,10 @@ public class UserAuthsServiceImpl implements UserAuthsService {
 
     @Resource
     private RedisTemplate<String, Object> redisTemplate;
+
+    @Resource
+    @Lazy
+    private UserDeviceSyncService userDeviceSyncService;
 
 
     /**
@@ -101,7 +107,7 @@ public class UserAuthsServiceImpl implements UserAuthsService {
                             .status((byte) 1)
                             .createTime(LocalDateTime.now())
                             .updateTime(LocalDateTime.now())
-                            .lastLoginTime(LocalDateTime.now())
+                            .lastLoginTime(null) // 注册时不设置最后登录时间，留作绝对首次登录判断
                             .build();
                     userDao.insert(user);
 
@@ -156,6 +162,9 @@ public class UserAuthsServiceImpl implements UserAuthsService {
                 }
 
 
+                // 判断是否是历史绝对首次登录
+                boolean isFirstLoginEver = (userTmp.getLastLoginTime() == null);
+
                 // 更新最后登录时间
                 userTmp.setLastLoginTime(LocalDateTime.now());
                 userDao.updateById(userTmp);
@@ -164,6 +173,12 @@ public class UserAuthsServiceImpl implements UserAuthsService {
 
                 // 删除已使用的验证码
                 redisTemplate.delete(redisVerifyCodeKey);
+                
+                // 处理多端同步记录初始化
+                if (loginDTO.getDeviceId() != null && !loginDTO.getDeviceId().isEmpty()) {
+                    Byte cType = loginDTO.getClientType() != null ? loginDTO.getClientType() : 1;
+                    userDeviceSyncService.getOrInitDeviceSync(userTmp.getId(), loginDTO.getDeviceId(), cType, isFirstLoginEver);
+                }
 
                 return token;
             default:

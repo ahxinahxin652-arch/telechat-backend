@@ -10,6 +10,9 @@ import com.telechat.pojo.entity.ChatMessage;
 import com.telechat.pojo.entity.Conversation;
 import com.telechat.service.ChatMessageService;
 import com.telechat.util.SnowflakeIdGenerator;
+import com.telechat.websocket.TelechatWebSocketHandler;
+import com.telechat.pojo.enums.WsMessageType;
+import com.telechat.websocket.message.WsMessage;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -36,6 +39,9 @@ public class ChatMessageServiceImpl implements ChatMessageService {
 
     @Resource
     private SnowflakeIdGenerator snowflakeIdGenerator;
+
+    @Resource
+    private TelechatWebSocketHandler telechatWebSocketHandler;
 
     @Transactional(rollbackFor = Exception.class)
     @Override
@@ -85,8 +91,50 @@ public class ChatMessageServiceImpl implements ChatMessageService {
         conversation.setLastMessageTime(now);
         conversationDao.update(conversation);
 
+        // 同步更新发送者的已读消息游标，防止自己发的消息变成未读
+        conversationMemberDao.updateLastReadMessageId(conversationId, senderId, message.getSeqId());
+
         // TODO: 可选，广播 WebSocket / RabbitMQ
+        // 此处进行简单的 WebSocket 实时推送
+        try {
+            java.util.List<com.telechat.pojo.entity.ConversationMember> members = conversationMemberDao.selectMembersByConversationId(conversationId);
+            if (members != null) {
+                WsMessage<ChatMessage> wsMessage = WsMessage.of(
+                        WsMessageType.CHAT,
+                        message.getId(),
+                        senderId,
+                        now.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli(),
+                        message
+                );
+                for (com.telechat.pojo.entity.ConversationMember member : members) {
+                    if (!member.getUserId().equals(senderId)) {
+                        telechatWebSocketHandler.sendMsg(member.getUserId(), wsMessage);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.error("WebSocket推送聊天消息失败", e);
+        }
 
         return message;
+    }
+
+    @Override
+    public void markMessageAsRead(Long userId, Long conversationId, Long seqId) {
+        if (conversationId == null || seqId == null) {
+            throw new ConversationException(ExceptionConstant.Judge_Query_Exception_Code, "参数错误");
+        }
+
+        com.telechat.pojo.entity.ConversationMember member = conversationMemberDao.selectByConversationIdAndUserId(conversationId, userId);
+        if (member == null) {
+            throw new ConversationException(ExceptionConstant.Judge_Query_Exception_Code, "您不在该会话中");
+        }
+
+        Long currentLastRead = member.getLastReadMessageId() == null ? 0L : member.getLastReadMessageId();
+
+        // 只有新的游标大于老游标，才进行覆盖更新，防止游标倒退
+        if (seqId > currentLastRead) {
+            conversationMemberDao.updateLastReadMessageId(conversationId, userId, seqId);
+        }
     }
 }
