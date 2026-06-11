@@ -3,6 +3,7 @@ package com.telechat.service.impl;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.*;
 
 import com.telechat.mq.event.ContactConversationEvent;
@@ -78,189 +79,211 @@ public class ConversationServiceImpl implements ConversationService {
      * @param userId 用户ID
      * @return true: 预热成功 / false: 未执行预热(已有线程在执行或发生异常)
      */
-    @Override
-    public Boolean preHeatConversationZSets(Long userId) {
-        // 1. 定义细粒度的分布式锁 Key，仅锁定当前用户
-        String lockKey = RedisConstant.USER_CONVERSATIONS_PREHEAT_LOCK + userId;
-        RLock lock = redissonClient.getLock(lockKey);
-
-        try {
-            // 2. 核心大招：非阻塞尝试加锁 (Fail-Fast)
-            // waitTime = 0: 绝不等待！拿不到锁直接返回 false。
-            // leaseTime = 10: 锁最多持有 10 秒，防止执行预热的机器突然断电宕机导致死锁 (看门狗机制)
-            if (lock.tryLock(0, 10, TimeUnit.SECONDS)) {
-                try {
-                    log.info("用户 {} 获取预热锁成功，开始执行高成本预热逻辑...", userId);
-                    // 3. 真正去查数据库并写入 Redis 的逻辑
-                    return conversationCacheService.preHeatConversationZSets(userId);
-                } finally {
-                    // 4. 安全释放锁：必须判断是否是当前线程持有的锁
-                    if (lock.isHeldByCurrentThread()) {
-                        lock.unlock();
-                    }
-                }
-            } else {
-                // 拿不到锁说明别的线程正在预热，直接忽略本次请求
-                log.info("用户 {} 的会话预热正在进行中，已阻断重复触发", userId);
-                return false;
-            }
-        } catch (InterruptedException e) {
-            // 恢复中断标志位
-            Thread.currentThread().interrupt();
-            log.error("用户 {} 预热加锁过程中被中断", userId, e);
-            return false;
-        } catch (Exception e) {
-            log.error("用户 {} 预热过程发生异常", userId, e);
-            return false;
-        }
-    }
+    // @Override
+    // public Boolean preHeatConversationZSets(Long userId) {
+    //     // 1. 定义细粒度的分布式锁 Key，仅锁定当前用户
+    //     String lockKey = RedisConstant.USER_CONVERSATIONS_PREHEAT_LOCK + userId;
+    //     RLock lock = redissonClient.getLock(lockKey);
+    //
+    //     try {
+    //         // 2. 核心大招：非阻塞尝试加锁 (Fail-Fast)
+    //         // waitTime = 0: 绝不等待！拿不到锁直接返回 false。
+    //         // leaseTime = 10: 锁最多持有 10 秒，防止执行预热的机器突然断电宕机导致死锁 (看门狗机制)
+    //         if (lock.tryLock(0, 10, TimeUnit.SECONDS)) {
+    //             try {
+    //                 log.info("用户 {} 获取预热锁成功，开始执行高成本预热逻辑...", userId);
+    //                 // 3. 真正去查数据库并写入 Redis 的逻辑
+    //                 return conversationCacheService.preHeatConversationZSets(userId);
+    //             } finally {
+    //                 // 4. 安全释放锁：必须判断是否是当前线程持有的锁
+    //                 if (lock.isHeldByCurrentThread()) {
+    //                     lock.unlock();
+    //                 }
+    //             }
+    //         } else {
+    //             // 拿不到锁说明别的线程正在预热，直接忽略本次请求
+    //             log.info("用户 {} 的会话预热正在进行中，已阻断重复触发", userId);
+    //             return false;
+    //         }
+    //     } catch (InterruptedException e) {
+    //         // 恢复中断标志位
+    //         Thread.currentThread().interrupt();
+    //         log.error("用户 {} 预热加锁过程中被中断", userId, e);
+    //         return false;
+    //     } catch (Exception e) {
+    //         log.error("用户 {} 预热过程发生异常", userId, e);
+    //         return false;
+    //     }
+    // }
 
     /**
      * 懒加载会话数据
      * 高性能架构：ZSet 游标 -> 触底 DB 回源 -> 自动补齐 ZSet -> 终点标记防穿透 -> 并行 MultiGet 组装
      *
      * @param userId 用户ID
-     * @param cursor 末尾会话的score（时间戳权重），0代表第一页
+     * @param //cursor 末尾会话的score（时间戳权重），0代表第一页
      * @return List<ConversationVO>
      */
+    // @Override
+    // public List<ConversationVO> lazyLoadConversations(Long userId, Double cursor) {
+    //     // 参数校验
+    //     if (userId == null || cursor == null) {
+    //         throw new ConversationException(ExceptionConstant.Judge_Query_Exception_Code, ExceptionConstant.Judge_Query_Exception_MSG);
+    //     }
+    //
+    //     String zsetKey = RedisConstant.USER_CONVERSATIONS_ZSET + userId;
+    //
+    //     // 1. 确定 ZSet 查询的 Score 边界范围
+    //     double maxScore = cursor == 0 ? ServiceConstant.MAX_TIME : cursor - 1;
+    //
+    //     // 【优化 1：使用 LinkedHashMap】完美保留 ZSet 顺序，同时存储 Score！
+    //     LinkedHashMap<Long, Double> idScoreMap = new LinkedHashMap<>();
+    //
+    //     // 从 Redis ZSet 中按 Score 倒序获取
+    //     Set<ZSetOperations.TypedTuple<Object>> tuples = redisTemplate.opsForZSet()
+    //             .reverseRangeByScoreWithScores(zsetKey, 0, maxScore, 0, ServiceConstant.LOAD_CONVERSATION_COUNT);
+    //
+    //     double lastScoreFetchFromRedis = maxScore;
+    //
+    //     if (!CollectionUtils.isEmpty(tuples)) {
+    //         for (ZSetOperations.TypedTuple<Object> tuple : tuples) {
+    //             Object valueObj = tuple.getValue();
+    //             if (valueObj == null) continue; // 防御性编程：防止底层序列化异常导致 null
+    //
+    //             String val = valueObj.toString();
+    //
+    //             Long cid = Long.valueOf(val);
+    //             Double score = tuple.getScore();
+    //             idScoreMap.put(cid, score); // 存入有序 Map
+    //             lastScoreFetchFromRedis = score;
+    //         }
+    //     }
+    //
+    //     // 2. 判断是否需要去数据库回源补齐
+    //     int remainNeed = ServiceConstant.LOAD_CONVERSATION_COUNT - idScoreMap.size();
+    //     boolean newlyHitBottom = false; // 标记本次 DB 查询是否刚刚触底
+    //
+    //     if (remainNeed > 0) {
+    //         // 去数据库查询更老的会话数据
+    //         boolean lastIsToped = lastScoreFetchFromRedis >= ServiceConstant.TOP_SCORE_OFFSET;
+    //         long lastTimestamp = (long) (lastIsToped ? (lastScoreFetchFromRedis - ServiceConstant.TOP_SCORE_OFFSET) : lastScoreFetchFromRedis);
+    //         LocalDateTime lastTime = LocalDateTime.ofInstant(Instant.ofEpochMilli(lastTimestamp), ZoneId.systemDefault());
+    //
+    //         List<ConversationZSetCache> dbList = conversationDao.selectOlderConversations(userId, lastIsToped, lastTime, remainNeed);
+    //
+    //         if (!CollectionUtils.isEmpty(dbList)) {
+    //             for (ConversationZSetCache item : dbList) {
+    //                 double score = item.getLastMessageTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+    //                 if (item.isToped()) {
+    //                     score += ServiceConstant.TOP_SCORE_OFFSET;
+    //                 }
+    //
+    //                 idScoreMap.put(item.getConversationId(), score); // 追加到有序 Map 尾部
+    //             }
+    //         }
+    //
+    //         // 缓存断层检测：ZSet Key 已失效，异步重建
+    //         boolean hasKey = !CollectionUtils.isEmpty(tuples) || Boolean.TRUE.equals(redisTemplate.hasKey(zsetKey));
+    //         if (!hasKey) {
+    //             log.warn("用户 {} 懒加载时缓存断层，触发异步预热，本次仅穿透DB", userId);
+    //             CompletableFuture.runAsync(() -> preHeatConversationZSets(userId), preHeatExecutor);
+    //         }
+    //
+    //         // 触底判断：DB 返回的数据不足一页，说明到底了
+    //         if (CollectionUtils.isEmpty(dbList) || dbList.size() < remainNeed) {
+    //             newlyHitBottom = true;
+    //         }
+    //     }
+    //
+    //     // 极端情况：连第一页都没数据，且刚查完 DB 发现触底
+    //     if (idScoreMap.isEmpty()) {
+    //         if (newlyHitBottom) {
+    //             // 返回哨兵给前端，让前端关闭 loading 状态
+    //             return Collections.singletonList(ConversationVO.builder().id(-1L).build());
+    //         }
+    //         return Collections.emptyList();
+    //     }
+    //
+    //     // 3. 高并发 MultiGet 聚合装配
+    //     // 此时 idScoreMap.keySet() 已经包含了所有需要查询的 ID，且严格按 score 倒序
+    //     List<Long> conversationIds = new ArrayList<>(idScoreMap.keySet());
+    //     Map<Long, ConversationStaticInfoCache> staticMap = conversationCacheService.getConversationStaticInfoCacheMapByIds(userId, conversationIds);
+    //     Map<Long, ConversationMetaInfoCache> metaMap = conversationCacheService.getConversationMetaInfoCacheMapByIds(conversationIds);
+    //     Map<Long, ConversationMemberCache> memberMap = conversationCacheService.getConversationMemberCacheByIds(userId, conversationIds);
+    //
+    //     // 4. 组装最终返回数据
+    //     List<ConversationVO> resultList = new ArrayList<>();
+    //
+    //     // 遍历 LinkedHashMap，既能取到有序的 ID，也能直接 O(1) 取到对应的 Score
+    //     for (Map.Entry<Long, Double> entry : idScoreMap.entrySet()) {
+    //         Long cid = entry.getKey();
+    //         Double score = entry.getValue();
+    //
+    //         ConversationStaticInfoCache staticInfo = staticMap.get(cid);
+    //         if (staticInfo == null || staticInfo.isNullPlaceholder()) {
+    //             continue; // 脏数据直接跳过
+    //         }
+    //
+    //         ConversationMetaInfoCache metaInfo = metaMap.get(cid);
+    //         ConversationMemberCache memberInfo = memberMap.get(cid);
+    //
+    //         ConversationVO vo = ConversationVO.builder()
+    //                 .id(cid)
+    //                 .type(staticInfo.getType())
+    //                 .title(staticInfo.getTitle())
+    //                 .avatar(staticInfo.getAvatar())
+    //                 .score(score) // <--- 【核心目标完成】精确写入对应的 Score
+    //                 .build();
+    //
+    //         // 动态信息
+    //         if (metaInfo != null && !metaInfo.isNullPlaceholder()) {
+    //             vo.setLastMessageContent(metaInfo.getLastMessageContent());
+    //             vo.setLastMessageTime(metaInfo.getLastMessageTime());
+    //         }
+    //
+    //         // 个性化状态
+    //         if (memberInfo != null && !memberInfo.isNullPlaceholder()) {
+    //             vo.setIsTop(memberInfo.isToped());
+    //             vo.setIsMuted(memberInfo.isMuted());
+    //             vo.setUnreadCount(memberInfo.getUnreadCount());
+    //         } else {
+    //             vo.setIsTop(false);
+    //             vo.setIsMuted(false);
+    //             vo.setUnreadCount(0);
+    //         }
+    //
+    //         resultList.add(vo);
+    //     }
+    //
+    //     // 【关键修复：向前端传递触底信号】
+    //     // 对应你前端 Pinia 的判断: const sentinelIndex = newData.findIndex(item => item.id === "-1");
+    //     // (假设 Long 型 ID 在全局配置了 toString 序列化给前端防精度丢失，此处 -1L 到前端会变成 "-1")
+    //     if (newlyHitBottom) {
+    //         resultList.add(ConversationVO.builder().id(-1L).build());
+    //     }
+    //
+    //     return resultList;
+    // }
+
     @Override
-    public List<ConversationVO> lazyLoadConversations(Long userId, Double cursor) {
-        // 参数校验
-        if (userId == null || cursor == null) {
+    public List<ConversationVO> syncConversations(Long userId, Long lastSyncTime) {
+        if (userId == null || lastSyncTime == null) {
             throw new ConversationException(ExceptionConstant.Judge_Query_Exception_Code, ExceptionConstant.Judge_Query_Exception_MSG);
         }
 
-        String zsetKey = RedisConstant.USER_CONVERSATIONS_ZSET + userId;
-
-        // 1. 确定 ZSet 查询的 Score 边界范围
-        double maxScore = cursor == 0 ? ServiceConstant.MAX_TIME : cursor - 1;
-
-        // 【优化 1：使用 LinkedHashMap】完美保留 ZSet 顺序，同时存储 Score！
-        LinkedHashMap<Long, Double> idScoreMap = new LinkedHashMap<>();
-
-        // 从 Redis ZSet 中按 Score 倒序获取
-        Set<ZSetOperations.TypedTuple<Object>> tuples = redisTemplate.opsForZSet()
-                .reverseRangeByScoreWithScores(zsetKey, 0, maxScore, 0, ServiceConstant.LOAD_CONVERSATION_COUNT);
-
-        double lastScoreFetchFromRedis = maxScore;
-
-        if (!CollectionUtils.isEmpty(tuples)) {
-            for (ZSetOperations.TypedTuple<Object> tuple : tuples) {
-                Object valueObj = tuple.getValue();
-                if (valueObj == null) continue; // 防御性编程：防止底层序列化异常导致 null
-
-                String val = valueObj.toString();
-
-                Long cid = Long.valueOf(val);
-                Double score = tuple.getScore();
-                idScoreMap.put(cid, score); // 存入有序 Map
-                lastScoreFetchFromRedis = score;
-            }
+        LocalDateTime syncTime;
+        if (lastSyncTime == 0) {
+            // 新号或无缓存，拉取最近活跃的200条（可调整）
+            syncTime = LocalDateTime.ofEpochSecond(0, 0, ZoneOffset.UTC);
+        } else {
+            syncTime = LocalDateTime.ofInstant(Instant.ofEpochMilli(lastSyncTime), ZoneId.systemDefault());
         }
 
-        // 2. 判断是否需要去数据库回源补齐
-        int remainNeed = ServiceConstant.LOAD_CONVERSATION_COUNT - idScoreMap.size();
-        boolean newlyHitBottom = false; // 标记本次 DB 查询是否刚刚触底
-
-        if (remainNeed > 0) {
-            // 去数据库查询更老的会话数据
-            boolean lastIsToped = lastScoreFetchFromRedis >= ServiceConstant.TOP_SCORE_OFFSET;
-            long lastTimestamp = (long) (lastIsToped ? (lastScoreFetchFromRedis - ServiceConstant.TOP_SCORE_OFFSET) : lastScoreFetchFromRedis);
-            LocalDateTime lastTime = LocalDateTime.ofInstant(Instant.ofEpochMilli(lastTimestamp), ZoneId.systemDefault());
-
-            List<ConversationZSetCache> dbList = conversationDao.selectOlderConversations(userId, lastIsToped, lastTime, remainNeed);
-
-            if (!CollectionUtils.isEmpty(dbList)) {
-                for (ConversationZSetCache item : dbList) {
-                    double score = item.getLastMessageTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
-                    if (item.isToped()) {
-                        score += ServiceConstant.TOP_SCORE_OFFSET;
-                    }
-
-                    idScoreMap.put(item.getConversationId(), score); // 追加到有序 Map 尾部
-                }
-            }
-
-            // 缓存断层检测：ZSet Key 已失效，异步重建
-            boolean hasKey = !CollectionUtils.isEmpty(tuples) || Boolean.TRUE.equals(redisTemplate.hasKey(zsetKey));
-            if (!hasKey) {
-                log.warn("用户 {} 懒加载时缓存断层，触发异步预热，本次仅穿透DB", userId);
-                CompletableFuture.runAsync(() -> preHeatConversationZSets(userId), preHeatExecutor);
-            }
-
-            // 触底判断：DB 返回的数据不足一页，说明到底了
-            if (CollectionUtils.isEmpty(dbList) || dbList.size() < remainNeed) {
-                newlyHitBottom = true;
-            }
-        }
-
-        // 极端情况：连第一页都没数据，且刚查完 DB 发现触底
-        if (idScoreMap.isEmpty()) {
-            if (newlyHitBottom) {
-                // 返回哨兵给前端，让前端关闭 loading 状态
-                return Collections.singletonList(ConversationVO.builder().id(-1L).build());
-            }
+        // 调用DAO执行联表查询
+        List<ConversationVO> resultList = conversationDao.selectSyncConversations(userId, syncTime);
+        if (resultList == null) {
             return Collections.emptyList();
         }
-
-        // 3. 高并发 MultiGet 聚合装配
-        // 此时 idScoreMap.keySet() 已经包含了所有需要查询的 ID，且严格按 score 倒序
-        List<Long> conversationIds = new ArrayList<>(idScoreMap.keySet());
-        Map<Long, ConversationStaticInfoCache> staticMap = conversationCacheService.getConversationStaticInfoCacheMapByIds(userId, conversationIds);
-        Map<Long, ConversationMetaInfoCache> metaMap = conversationCacheService.getConversationMetaInfoCacheMapByIds(conversationIds);
-        Map<Long, ConversationMemberCache> memberMap = conversationCacheService.getConversationMemberCacheByIds(userId, conversationIds);
-
-        // 4. 组装最终返回数据
-        List<ConversationVO> resultList = new ArrayList<>();
-
-        // 遍历 LinkedHashMap，既能取到有序的 ID，也能直接 O(1) 取到对应的 Score
-        for (Map.Entry<Long, Double> entry : idScoreMap.entrySet()) {
-            Long cid = entry.getKey();
-            Double score = entry.getValue();
-
-            ConversationStaticInfoCache staticInfo = staticMap.get(cid);
-            if (staticInfo == null || staticInfo.isNullPlaceholder()) {
-                continue; // 脏数据直接跳过
-            }
-
-            ConversationMetaInfoCache metaInfo = metaMap.get(cid);
-            ConversationMemberCache memberInfo = memberMap.get(cid);
-
-            ConversationVO vo = ConversationVO.builder()
-                    .id(cid)
-                    .type(staticInfo.getType())
-                    .title(staticInfo.getTitle())
-                    .avatar(staticInfo.getAvatar())
-                    .score(score) // <--- 【核心目标完成】精确写入对应的 Score
-                    .build();
-
-            // 动态信息
-            if (metaInfo != null && !metaInfo.isNullPlaceholder()) {
-                vo.setLastMessageContent(metaInfo.getLastMessageContent());
-                vo.setLastMessageTime(metaInfo.getLastMessageTime());
-            }
-
-            // 个性化状态
-            if (memberInfo != null && !memberInfo.isNullPlaceholder()) {
-                vo.setIsTop(memberInfo.isToped());
-                vo.setIsMuted(memberInfo.isMuted());
-                vo.setUnreadCount(memberInfo.getUnreadCount());
-            } else {
-                vo.setIsTop(false);
-                vo.setIsMuted(false);
-                vo.setUnreadCount(0);
-            }
-
-            resultList.add(vo);
-        }
-
-        // 【关键修复：向前端传递触底信号】
-        // 对应你前端 Pinia 的判断: const sentinelIndex = newData.findIndex(item => item.id === "-1");
-        // (假设 Long 型 ID 在全局配置了 toString 序列化给前端防精度丢失，此处 -1L 到前端会变成 "-1")
-        if (newlyHitBottom) {
-            resultList.add(ConversationVO.builder().id(-1L).build());
-        }
-
         return resultList;
     }
 
@@ -431,22 +454,11 @@ public class ConversationServiceImpl implements ConversationService {
         member.setUserId(userId);
         member.setConversationId(conversationId);
         member.setToped(isTop);
+        // DB更新时会自动刷新 updated_time
         conversationMemberDao.updateSettings(member);
 
-        String zsetKey = RedisConstant.USER_CONVERSATIONS_ZSET + userId;
-        Double score = redisTemplate.opsForZSet().score(zsetKey, String.valueOf(conversationId));
-        if (score != null) {
-            if (isTop) {
-                if (score < ServiceConstant.TOP_SCORE_OFFSET) {
-                    redisTemplate.opsForZSet().add(zsetKey, String.valueOf(conversationId), score + ServiceConstant.TOP_SCORE_OFFSET);
-                }
-            } else {
-                if (score >= ServiceConstant.TOP_SCORE_OFFSET) {
-                    redisTemplate.opsForZSet().add(zsetKey, String.valueOf(conversationId), score - ServiceConstant.TOP_SCORE_OFFSET);
-                }
-            }
-        }
-        redisTemplate.opsForHash().delete(RedisConstant.USER_CONVERSATION_MEMBER + userId, String.valueOf(conversationId));
+        // 删除旧版Redis ZSet维护逻辑，依赖前端增量拉取和WS推送
+        // redisTemplate.opsForHash().delete(RedisConstant.USER_CONVERSATION_MEMBER + userId, String.valueOf(conversationId));
     }
 
     @Override
@@ -457,7 +469,7 @@ public class ConversationServiceImpl implements ConversationService {
         member.setMuted(isMuted);
         conversationMemberDao.updateSettings(member);
 
-        redisTemplate.opsForHash().delete(RedisConstant.USER_CONVERSATION_MEMBER + userId, String.valueOf(conversationId));
+        // redisTemplate.opsForHash().delete(RedisConstant.USER_CONVERSATION_MEMBER + userId, String.valueOf(conversationId));
     }
 
     @Override
@@ -468,8 +480,9 @@ public class ConversationServiceImpl implements ConversationService {
         member.setDeleted(true);
         conversationMemberDao.updateSettings(member);
 
-        conversationCacheService.removeConversationFromZSetSafe(userId, conversationId);
-        redisTemplate.opsForHash().delete(RedisConstant.USER_CONVERSATION_MEMBER + userId, String.valueOf(conversationId));
+        // 彻底废除 ZSet 相关调用
+        // conversationCacheService.removeConversationFromZSetSafe(userId, conversationId);
+        // redisTemplate.opsForHash().delete(RedisConstant.USER_CONVERSATION_MEMBER + userId, String.valueOf(conversationId));
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -486,10 +499,10 @@ public class ConversationServiceImpl implements ConversationService {
         // 1. DB: 删除该用户的群成员记录
         conversationMemberDao.delete(conversationId, userId);
 
-        // 2. Redis: 清理用户的会话 ZSet、个人状态 Hash、群成员 Hash
-        conversationCacheService.removeConversationFromZSetSafe(userId, conversationId);
-        redisTemplate.opsForHash().delete(RedisConstant.USER_CONVERSATION_MEMBER + userId, String.valueOf(conversationId));
-        redisTemplate.opsForHash().delete(RedisConstant.CONVERSATION_GROUP_MEMBER + conversationId, String.valueOf(userId));
+        // 2. Redis: 仅清理个人状态 Hash、群成员 Hash
+        // conversationCacheService.removeConversationFromZSetSafe(userId, conversationId);
+        // redisTemplate.opsForHash().delete(RedisConstant.USER_CONVERSATION_MEMBER + userId, String.valueOf(conversationId));
+        // redisTemplate.opsForHash().delete(RedisConstant.CONVERSATION_GROUP_MEMBER + conversationId, String.valueOf(userId));
 
         // 3. MQ: 事务提交后通知群内其他成员 ("xxx 退出了群聊")
         AfterCommitUtil.executeAfterCommit(() -> {
@@ -537,4 +550,4 @@ public class ConversationServiceImpl implements ConversationService {
         });
     }
 }
-
+

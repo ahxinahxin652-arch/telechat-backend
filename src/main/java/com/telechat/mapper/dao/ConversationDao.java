@@ -44,6 +44,10 @@ public class ConversationDao {
         return conversationMapper.selectOlderConversations(userId, lastIsToped, lastTime, limit);
     }
 
+    public List<com.telechat.pojo.vo.ConversationVO> selectSyncConversations(Long userId, LocalDateTime syncTime) {
+        return conversationMapper.selectSyncConversations(userId, syncTime);
+    }
+
     /**
      * 插入会话
      *

@@ -28,29 +28,37 @@ public class ConversationController {
      * param userId
      * @return boolean
      */
-    @Operation(summary = "预热会话列表数据ZSet")
-    @GetMapping("/preHeat")
-    public Result<Boolean> preHeatConversations() {
-        // 从Security上下文中获取用户ID
-        Long userId = (Long) SecurityContextHolder.getContext()
-                .getAuthentication().getPrincipal();
-
-        return Result.success(conversationService.preHeatConversationZSets(userId));
-    }
+    // @Operation(summary = "预热会话列表数据ZSet")
+    // @GetMapping("/preHeat")
+    // public Result<Boolean> preHeatConversations() {
+    //     // 从Security上下文中获取用户ID
+    //     Long userId = (Long) SecurityContextHolder.getContext()
+    //             .getAuthentication().getPrincipal();
+    //
+    //     return Result.success(conversationService.preHeatConversationZSets(userId));
+    // }
 
     /**
      * 懒加载会话
      * param cursor 游标
      * @return boolean
      */
-    @Operation(summary = "懒加载会话")
-    @GetMapping("/lazyLoad")
-    public Result<List<ConversationVO>> lazyLoadConversations(Double cursor) {
-        // 从Security上下文中获取用户ID
-        Long userId = (Long) SecurityContextHolder.getContext()
-                .getAuthentication().getPrincipal();
+    // @Operation(summary = "懒加载会话")
+    // @GetMapping("/lazyLoad")
+    // public Result<List<ConversationVO>> lazyLoadConversations(Double cursor) {
+    //     // 从Security上下文中获取用户ID
+    //     Long userId = (Long) SecurityContextHolder.getContext()
+    //             .getAuthentication().getPrincipal();
+    //
+    //     List<ConversationVO> conversationVOS = conversationService.lazyLoadConversations(userId, cursor);
+    //     return Result.success(conversationVOS);
+    // }
 
-        List<ConversationVO> conversationVOS = conversationService.lazyLoadConversations(userId, cursor);
+    @Operation(summary = "增量同步拉取会话列表")
+    @GetMapping("/sync")
+    public Result<List<ConversationVO>> syncConversations(@RequestParam("lastSyncTime") Long lastSyncTime) {
+        Long userId = (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        List<ConversationVO> conversationVOS = conversationService.syncConversations(userId, lastSyncTime);
         return Result.success(conversationVOS);
     }
 

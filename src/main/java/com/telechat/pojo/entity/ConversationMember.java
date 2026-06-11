@@ -33,4 +33,5 @@ public class ConversationMember {
     private boolean isToped;
     private Long lastReadMessageId;
     private LocalDateTime joinedTime;
+    private LocalDateTime updatedTime;
 }

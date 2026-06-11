@@ -32,4 +32,9 @@ public interface ConversationMapper extends BaseMapper<Conversation> {
             @Param("lastTime") LocalDateTime lastTime,
             @Param("limit") int limit
     );
+
+    List<com.telechat.pojo.vo.ConversationVO> selectSyncConversations(
+            @Param("userId") Long userId,
+            @Param("syncTime") LocalDateTime syncTime
+    );
 }

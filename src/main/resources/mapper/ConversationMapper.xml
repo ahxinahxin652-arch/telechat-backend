@@ -42,4 +42,41 @@
         ORDER BY m.is_toped DESC, c.last_message_time DESC
             LIMIT #{limit}
     </select>
+
+    <select id="selectSyncConversations" resultType="com.telechat.pojo.vo.ConversationVO">
+        SELECT
+            c.id AS id,
+            c.type AS type,
+            IF(c.type = 0, (
+                SELECT u.nickname 
+                FROM conversation_member other_cm 
+                JOIN user u ON u.id = other_cm.user_id 
+                WHERE other_cm.conversation_id = c.id AND other_cm.user_id != #{userId}
+                LIMIT 1
+            ), c.title) AS title,
+            IF(c.type = 0, (
+                SELECT u.avatar 
+                FROM conversation_member other_cm 
+                JOIN user u ON u.id = other_cm.user_id 
+                WHERE other_cm.conversation_id = c.id AND other_cm.user_id != #{userId}
+                LIMIT 1
+            ), c.avatar) AS avatar,
+            c.last_message_content AS lastMessageContent,
+            c.last_message_time AS lastMessageTime,
+            cm.is_toped AS isTop,
+            cm.is_muted AS isMuted,
+            (
+                SELECT count(*)
+                FROM chat_message m
+                WHERE m.conversation_id = c.id
+                  AND m.id > IFNULL(cm.last_read_message_id, 0)
+            ) AS unreadCount
+        FROM conversation c
+        INNER JOIN conversation_member cm ON c.id = cm.conversation_id
+        WHERE cm.user_id = #{userId}
+          AND cm.is_deleted = 0
+          AND (c.last_message_time > #{syncTime} OR cm.updated_time > #{syncTime})
+        ORDER BY cm.is_toped DESC, c.last_message_time DESC
+        LIMIT 200
+    </select>
 </mapper>

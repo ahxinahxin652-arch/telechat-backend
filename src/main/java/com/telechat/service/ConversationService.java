@@ -13,7 +13,7 @@ public interface ConversationService {
      * @param userId 用户ID
      * @return true: 预热成功/false: 预热失败
      */
-    Boolean preHeatConversationZSets(Long userId);
+    // Boolean preHeatConversationZSets(Long userId);
 
 
 
@@ -24,7 +24,9 @@ public interface ConversationService {
      * @param cursor 末尾会话的score（时间戳权重）
      * @return List<ConversationVO>
      */
-    List<ConversationVO> lazyLoadConversations(Long userId, Double cursor);
+    // List<ConversationVO> lazyLoadConversations(Long userId, Double cursor);
+
+    List<ConversationVO> syncConversations(Long userId, Long lastSyncTime);
 
 
     /**
