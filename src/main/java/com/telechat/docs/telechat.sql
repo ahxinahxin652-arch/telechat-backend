@@ -150,4 +150,22 @@ CREATE TABLE `user_auths`  (
   INDEX `idx_user_id`(`user_id` ASC) USING BTREE
 ) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci ROW_FORMAT = Dynamic;
 
+-- ----------------------------
+-- Table structure for user_device_sync
+-- ----------------------------
+DROP TABLE IF EXISTS `user_device_sync`;
+CREATE TABLE `user_device_sync`  (
+  `id` bigint NOT NULL,
+  `user_id` bigint NOT NULL COMMENT '用户ID',
+  `device_id` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL COMMENT '设备标识',
+  `client_type` tinyint NOT NULL COMMENT '客户端类型 1:Web 2:PC 3:Android 4:iOS',
+  `last_sync_time` timestamp NOT NULL COMMENT '该设备拉取消息的最后时间点/游标',
+  `status` tinyint NOT NULL DEFAULT 1 COMMENT '设备状态 1:正常 0:下线/注销',
+  `created_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '首次登录该设备的时间',
+  `updated_time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '最后更新时间',
+  PRIMARY KEY (`id`) USING BTREE,
+  UNIQUE INDEX `idx_user_device`(`user_id` ASC, `device_id` ASC) USING BTREE,
+  INDEX `idx_user_sync_time`(`user_id` ASC, `last_sync_time` ASC) USING BTREE
+) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci ROW_FORMAT = Dynamic;
+
 SET FOREIGN_KEY_CHECKS = 1;
