@@ -53,4 +53,7 @@ public class RedisConstant {
     // 群成员信息缓存 Set
     public static final String CONVERSATION_GROUP_MEMBER = "conversation:groupMember:";
     public static final Long CONVERSATION_GROUP_MEMBER_DURATION = 3L; // 3d
+    
+    // 会话消息序列号 (INCR)
+    public static final String CONVERSATION_SEQ_ID = "conversation:seq:";
 }

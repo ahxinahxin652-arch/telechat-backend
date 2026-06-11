@@ -2,6 +2,7 @@ package com.telechat.controller.user;
 
 import com.telechat.pojo.dto.conversation.CreateGroupDTO;
 import com.telechat.pojo.result.Result;
+import com.telechat.pojo.vo.ConversationSyncVO;
 import com.telechat.pojo.vo.ConversationVO;
 import com.telechat.service.ConversationService;
 import com.telechat.util.RedisTemplateUtil;
@@ -54,12 +55,12 @@ public class ConversationController {
     //     return Result.success(conversationVOS);
     // }
 
-    @Operation(summary = "增量同步拉取会话列表")
+    @Operation(summary = "增量同步拉取会话列表及离线消息")
     @GetMapping("/sync")
-    public Result<List<ConversationVO>> syncConversations(@RequestParam("lastSyncTime") Long lastSyncTime) {
+    public Result<ConversationSyncVO> syncConversations(@RequestParam("lastSyncTime") Long lastSyncTime) {
         Long userId = (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
-        List<ConversationVO> conversationVOS = conversationService.syncConversations(userId, lastSyncTime);
-        return Result.success(conversationVOS);
+        ConversationSyncVO syncVO = conversationService.syncConversations(userId, lastSyncTime);
+        return Result.success(syncVO);
     }
 
     /**

@@ -27,11 +27,14 @@ import com.telechat.constant.*;
 import com.telechat.exception.exceptions.ConversationException;
 import com.telechat.mapper.dao.ConversationDao;
 import com.telechat.mapper.dao.ConversationMemberDao;
+import com.telechat.mapper.dao.ChatMessageDao;
 import com.telechat.pojo.entity.Conversation;
 import com.telechat.pojo.entity.ConversationMember;
+import com.telechat.pojo.entity.ChatMessage;
 import com.telechat.pojo.enums.ConversationMemberRole;
 import com.telechat.pojo.enums.ConversationStatus;
 import com.telechat.pojo.enums.ConversationType;
+import com.telechat.pojo.vo.ConversationSyncVO;
 import com.telechat.pojo.vo.ConversationVO;
 import com.telechat.service.ConversationService;
 import com.telechat.util.SnowflakeIdGenerator;
@@ -54,6 +57,9 @@ public class ConversationServiceImpl implements ConversationService {
 
     @Resource
     private ConversationMemberDao conversationMemberDao;
+
+    @Resource
+    private ChatMessageDao chatMessageDao;
 
     // mq
     @Resource
@@ -266,25 +272,55 @@ public class ConversationServiceImpl implements ConversationService {
     // }
 
     @Override
-    public List<ConversationVO> syncConversations(Long userId, Long lastSyncTime) {
+    public ConversationSyncVO syncConversations(Long userId, Long lastSyncTime) {
         if (userId == null || lastSyncTime == null) {
             throw new ConversationException(ExceptionConstant.Judge_Query_Exception_Code, ExceptionConstant.Judge_Query_Exception_MSG);
         }
 
         LocalDateTime syncTime;
         if (lastSyncTime == 0) {
-            // 新号或无缓存，拉取最近活跃的200条（可调整）
             syncTime = LocalDateTime.ofEpochSecond(0, 0, ZoneOffset.UTC);
         } else {
             syncTime = LocalDateTime.ofInstant(Instant.ofEpochMilli(lastSyncTime), ZoneId.systemDefault());
         }
 
-        // 调用DAO执行联表查询
-        List<ConversationVO> resultList = conversationDao.selectSyncConversations(userId, syncTime);
-        if (resultList == null) {
-            return Collections.emptyList();
+        // 1. 查询会话状态增量（包含新增好友、群聊状态变更等）
+        List<ConversationVO> changedConversations = conversationDao.selectSyncConversations(userId, syncTime);
+        if (changedConversations == null) {
+            changedConversations = Collections.emptyList();
         }
-        return resultList;
+        
+        // 提取有更新的会话 ID 列表
+        List<Long> conversationIds = changedConversations.stream()
+                .map(ConversationVO::getId)
+                .collect(Collectors.toList());
+
+        Map<Long, List<ChatMessage>> messagesMap = new HashMap<>();
+        
+        // 2. 查询离线期间的具体消息
+        if (!conversationIds.isEmpty()) {
+            List<ChatMessage> offlineMessages = chatMessageDao.selectMessagesAfterTime(conversationIds, syncTime);
+            if (!CollectionUtils.isEmpty(offlineMessages)) {
+                // 按会话 ID 分组
+                Map<Long, List<ChatMessage>> groupedMessages = offlineMessages.stream()
+                        .collect(Collectors.groupingBy(ChatMessage::getConversationId));
+                
+                // 执行折叠/截断策略
+                for (Map.Entry<Long, List<ChatMessage>> entry : groupedMessages.entrySet()) {
+                    List<ChatMessage> msgs = entry.getValue();
+                    if (msgs.size() > 100) {
+                        // 超过 100 条只保留最新的一条，实际未读数已经在 selectSyncConversations 中由后端统计完毕
+                        msgs = Collections.singletonList(msgs.get(msgs.size() - 1));
+                    }
+                    messagesMap.put(entry.getKey(), msgs);
+                }
+            }
+        }
+
+        return ConversationSyncVO.builder()
+                .messages(messagesMap)
+                .conversations(changedConversations)
+                .build();
     }
 
     /**

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd" >
+<mapper namespace="com.telechat.mapper.ChatMessageMapper">
+
+    <select id="selectMessagesAfterTime" resultType="com.telechat.pojo.entity.ChatMessage">
+        SELECT *
+        FROM chat_message
+        WHERE conversation_id IN
+        <foreach collection="conversationIds" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+        <if test="syncTime != null">
+            AND created_time > #{syncTime}
+        </if>
+        ORDER BY created_time ASC
+    </select>
+
+</mapper>

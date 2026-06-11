@@ -1,5 +1,6 @@
 package com.telechat.service;
 
+import com.telechat.pojo.vo.ConversationSyncVO;
 import com.telechat.pojo.vo.ConversationVO;
 
 import java.util.Collection;
@@ -26,7 +27,7 @@ public interface ConversationService {
      */
     // List<ConversationVO> lazyLoadConversations(Long userId, Double cursor);
 
-    List<ConversationVO> syncConversations(Long userId, Long lastSyncTime);
+    ConversationSyncVO syncConversations(Long userId, Long lastSyncTime);
 
 
     /**

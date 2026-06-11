@@ -15,6 +15,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
+import com.baomidou.mybatisplus.annotation.TableField;
 
 @Data
 @AllArgsConstructor
@@ -28,8 +29,11 @@ public class ConversationMember {
     private Long conversationId;
     private Long userId;
     private ConversationMemberRole role;
+    @TableField("is_muted")
     private boolean isMuted;
+    @TableField("is_deleted")
     private boolean isDeleted;
+    @TableField("is_toped")
     private boolean isToped;
     private Long lastReadMessageId;
     private LocalDateTime joinedTime;

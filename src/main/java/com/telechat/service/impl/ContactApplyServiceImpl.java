@@ -32,6 +32,7 @@ import com.telechat.pojo.enums.ConversationType;
 import com.telechat.pojo.vo.ContactApplyVO;
 import com.telechat.service.ContactApplyService;
 import com.telechat.service.UserService;
+import com.telechat.service.ChatMessageService;
 import com.telechat.util.SnowflakeIdGenerator;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
@@ -63,6 +64,9 @@ public class ContactApplyServiceImpl implements ContactApplyService {
 
     @Resource
     private ConversationCacheService conversationCacheService;
+
+    @Resource
+    private ChatMessageService chatMessageService;
 
     // dao
     @Resource
@@ -336,8 +340,11 @@ public class ContactApplyServiceImpl implements ContactApplyService {
                 now
         );
 
-        double score = now.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+        // 3.5 发送系统打招呼消息 (消息类型 100)
+        // 这里的 userId 是当前操作同意的用户 (即接收申请的 B)
+        chatMessageService.sendMessage(userId, conversation.getId(), "我们已经添加好友，开始聊天吧!", 100);
 
+        double score = now.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
 
         // 将所有删除缓存的操作，注册到事务提交后的回调中执行
         Conversation finalConversation = conversation;

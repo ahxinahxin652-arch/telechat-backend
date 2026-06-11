@@ -22,6 +22,7 @@ public class ChatMessage {
     private Long seqId;
     private Long senderId;
     private String content;
-    private String messageType;
-    private LocalDateTime createTime;
+    private Integer messageType;
+    private LocalDateTime createdTime;
+    private Byte status;
 }
