@@ -147,7 +147,8 @@ public class ChatMessageServiceImpl implements ChatMessageService {
         }
 
         // 校验权限
-        if (conversationMemberDao.selectByConversationIdAndUserId(conversationId, userId) == null) {
+        com.telechat.pojo.entity.ConversationMember member = conversationMemberDao.selectByConversationIdAndUserId(conversationId, userId);
+        if (member == null) {
             throw new ConversationException(ExceptionConstant.Judge_Query_Exception_Code, "您不在该会话中");
         }
 
@@ -155,9 +156,10 @@ public class ChatMessageServiceImpl implements ChatMessageService {
             direction = "older";
         }
 
+        java.util.List<ChatMessage> result;
         if ("newer".equalsIgnoreCase(direction)) {
             // 查询 anchorSeqId 之后的新消息，升序排列
-            return chatMessageDao.selectMessagesNewer(conversationId, anchorSeqId, limit);
+            result = chatMessageDao.selectMessagesNewer(conversationId, anchorSeqId, limit);
         } else if ("around".equalsIgnoreCase(direction)) {
             // 查询前后的消息，前端需要看到 anchor 本身
             // 分成两步查：查前面的 limit/2，和后面的 limit/2
@@ -171,19 +173,28 @@ public class ChatMessageServiceImpl implements ChatMessageService {
             // anchorMsg 本身
             ChatMessage anchorMsg = chatMessageDao.selectMessageBySeqId(conversationId, anchorSeqId);
 
-            java.util.List<ChatMessage> result = new java.util.ArrayList<>();
+            result = new java.util.ArrayList<>();
             if (olderList != null) result.addAll(olderList);
             if (anchorMsg != null) result.add(anchorMsg);
             if (newerList != null) result.addAll(newerList);
-            return result;
         } else {
             // 默认 older: 查询 anchorSeqId 之前的旧消息，返回的结果是降序的，但在服务层我们一般要给前端按时间升序（从旧到新排列显示）
             // 查的时候按 seqId desc 查，拿到最新的一批历史，然后 reverse 给前端
-            java.util.List<ChatMessage> list = chatMessageDao.selectMessagesOlder(conversationId, anchorSeqId, limit);
-            if (list != null && !list.isEmpty()) {
-                java.util.Collections.reverse(list);
+            result = chatMessageDao.selectMessagesOlder(conversationId, anchorSeqId, limit);
+            if (result != null && !result.isEmpty()) {
+                java.util.Collections.reverse(result);
             }
-            return list;
         }
+
+        // 自动推进已读游标 (Auto-Read)
+        if (result != null && !result.isEmpty() && !"older".equalsIgnoreCase(direction)) {
+            Long maxSeqId = result.stream().map(ChatMessage::getSeqId).max(Long::compareTo).orElse(0L);
+            Long currentReadSeqId = member.getLastReadMessageId() != null ? member.getLastReadMessageId() : 0L;
+            if (maxSeqId > currentReadSeqId) {
+                conversationMemberDao.updateLastReadMessageId(conversationId, userId, maxSeqId);
+            }
+        }
+
+        return result;
     }
 }
