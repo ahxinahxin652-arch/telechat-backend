@@ -140,6 +140,7 @@ public class UserController {
             String token = userAuthsService.login(loginDTO);
             user = userService.getUserById(jwtTokenProvider.getUserIdFromToken(token));
             UserInfoVO userInfoVO = UserInfoVO.builder()
+                    .id(user.getId())
                     .username(user.getUsername())
                     .nickname(user.getNickname())
                     .avatar(user.getAvatar())

@@ -50,6 +50,7 @@ public class ProfileController {
                 UserInfoCache userInfoCache = userInfoCacheService.getUserInfoCache(userId);
 
                 UserInfoVO userInfoVO = UserInfoVO.builder()
+                        .id(userId)
                         .username(userInfoCache.getUsername())
                         .nickname(userInfoCache.getNickname())
                         .avatar(userInfoCache.getAvatar())

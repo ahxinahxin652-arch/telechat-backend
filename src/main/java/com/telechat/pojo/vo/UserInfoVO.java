@@ -18,6 +18,7 @@ import java.time.LocalDateTime;
 
 @Builder
 public class UserInfoVO {
+    private Long id;
     private String username;
     private String nickname;
     private String avatar;
