@@ -49,4 +49,18 @@ public class ChatMessageController {
         chatMessageService.markMessageAsRead(userId, conversationId, seqId);
         return Result.success();
     }
+
+    @Operation(summary = "拉取历史消息(锚点分页)")
+    @PostMapping("/messages/history")
+    public Result<java.util.List<ChatMessage>> getHistoryMessages(@RequestBody com.telechat.pojo.dto.HistoryMessageReq req) {
+        Long userId = (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        java.util.List<ChatMessage> messages = chatMessageService.getHistoryMessages(
+                userId,
+                req.getConversationId(),
+                req.getAnchorSeqId(),
+                req.getLimit(),
+                req.getDirection()
+        );
+        return Result.success(messages);
+    }
 }

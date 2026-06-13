@@ -21,4 +21,15 @@ public interface ChatMessageService {
      * @param seqId          已读的最大seqId
      */
     void markMessageAsRead(Long userId, Long conversationId, Long seqId);
+
+    /**
+     * 拉取历史消息(锚点分页)
+     * @param userId         当前用户
+     * @param conversationId 会话ID
+     * @param anchorSeqId    锚点消息序列号
+     * @param limit          限制条数
+     * @param direction      方向 older/newer/around
+     * @return 历史消息列表
+     */
+    java.util.List<ChatMessage> getHistoryMessages(Long userId, Long conversationId, Long anchorSeqId, Integer limit, String direction);
 }

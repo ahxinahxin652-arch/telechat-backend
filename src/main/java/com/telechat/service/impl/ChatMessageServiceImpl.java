@@ -41,7 +41,7 @@ public class ChatMessageServiceImpl implements ChatMessageService {
     private SnowflakeIdGenerator snowflakeIdGenerator;
 
     @Resource
-    private TelechatWebSocketHandler telechatWebSocketHandler;
+    private com.telechat.mq.publisher.ChatMessageEventPublisher chatMessageEventPublisher;
 
     @Transactional(rollbackFor = Exception.class)
     @Override
@@ -94,26 +94,28 @@ public class ChatMessageServiceImpl implements ChatMessageService {
         // 同步更新发送者的已读消息游标，防止自己发的消息变成未读
         conversationMemberDao.updateLastReadMessageId(conversationId, senderId, message.getSeqId());
 
-        // TODO: 可选，广播 WebSocket / RabbitMQ
-        // 此处进行简单的 WebSocket 实时推送
+        // 5. 将消息发往 RabbitMQ，由特定消费者处理并发给 WebSocket (保证可靠投递和重试机制)
         try {
             java.util.List<com.telechat.pojo.entity.ConversationMember> members = conversationMemberDao.selectMembersByConversationId(conversationId);
             if (members != null) {
-                WsMessage<ChatMessage> wsMessage = WsMessage.of(
-                        WsMessageType.CHAT,
-                        message.getId(),
-                        senderId,
-                        now.atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli(),
-                        message
-                );
+                java.util.List<Long> receiverIds = new java.util.ArrayList<>();
                 for (com.telechat.pojo.entity.ConversationMember member : members) {
                     if (!member.getUserId().equals(senderId)) {
-                        telechatWebSocketHandler.sendMsg(member.getUserId(), wsMessage);
+                        receiverIds.add(member.getUserId());
                     }
                 }
+                
+                com.telechat.mq.event.ChatMessageEvent event = com.telechat.mq.event.ChatMessageEvent.builder()
+                        .senderId(senderId)
+                        .conversationId(conversationId)
+                        .message(message)
+                        .receiverIds(receiverIds)
+                        .build();
+                        
+                chatMessageEventPublisher.publishChatMessageEvent(event);
             }
         } catch (Exception e) {
-            log.error("WebSocket推送聊天消息失败", e);
+            log.error("将消息发往 RabbitMQ 失败", e);
         }
 
         return message;
@@ -135,6 +137,53 @@ public class ChatMessageServiceImpl implements ChatMessageService {
         // 只有新的游标大于老游标，才进行覆盖更新，防止游标倒退
         if (seqId > currentLastRead) {
             conversationMemberDao.updateLastReadMessageId(conversationId, userId, seqId);
+        }
+    }
+
+    @Override
+    public java.util.List<ChatMessage> getHistoryMessages(Long userId, Long conversationId, Long anchorSeqId, Integer limit, String direction) {
+        if (conversationId == null || anchorSeqId == null || limit == null || limit <= 0) {
+            throw new ConversationException(ExceptionConstant.Judge_Query_Exception_Code, "参数错误");
+        }
+
+        // 校验权限
+        if (conversationMemberDao.selectByConversationIdAndUserId(conversationId, userId) == null) {
+            throw new ConversationException(ExceptionConstant.Judge_Query_Exception_Code, "您不在该会话中");
+        }
+
+        if (direction == null) {
+            direction = "older";
+        }
+
+        if ("newer".equalsIgnoreCase(direction)) {
+            // 查询 anchorSeqId 之后的新消息，升序排列
+            return chatMessageDao.selectMessagesNewer(conversationId, anchorSeqId, limit);
+        } else if ("around".equalsIgnoreCase(direction)) {
+            // 查询前后的消息，前端需要看到 anchor 本身
+            // 分成两步查：查前面的 limit/2，和后面的 limit/2
+            int half = limit / 2;
+            java.util.List<ChatMessage> olderList = chatMessageDao.selectMessagesOlder(conversationId, anchorSeqId, half);
+            // olderList 查出来是降序，需要反转
+            java.util.Collections.reverse(olderList);
+
+            java.util.List<ChatMessage> newerList = chatMessageDao.selectMessagesNewer(conversationId, anchorSeqId, half);
+
+            // anchorMsg 本身
+            ChatMessage anchorMsg = chatMessageDao.selectMessageBySeqId(conversationId, anchorSeqId);
+
+            java.util.List<ChatMessage> result = new java.util.ArrayList<>();
+            if (olderList != null) result.addAll(olderList);
+            if (anchorMsg != null) result.add(anchorMsg);
+            if (newerList != null) result.addAll(newerList);
+            return result;
+        } else {
+            // 默认 older: 查询 anchorSeqId 之前的旧消息，返回的结果是降序的，但在服务层我们一般要给前端按时间升序（从旧到新排列显示）
+            // 查的时候按 seqId desc 查，拿到最新的一批历史，然后 reverse 给前端
+            java.util.List<ChatMessage> list = chatMessageDao.selectMessagesOlder(conversationId, anchorSeqId, limit);
+            if (list != null && !list.isEmpty()) {
+                java.util.Collections.reverse(list);
+            }
+            return list;
         }
     }
 }

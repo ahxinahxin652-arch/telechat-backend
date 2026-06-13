@@ -27,7 +27,7 @@ public interface ConversationService {
      */
     // List<ConversationVO> lazyLoadConversations(Long userId, Double cursor);
 
-    ConversationSyncVO syncConversations(Long userId, String deviceId);
+    ConversationSyncVO syncConversations(Long userId, String deviceId, Long clientLastSyncTime);
 
 
     /**

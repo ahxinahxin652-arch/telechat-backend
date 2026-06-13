@@ -16,4 +16,30 @@
         ORDER BY created_time ASC
     </select>
 
+    <select id="selectMessagesNewer" resultType="com.telechat.pojo.entity.ChatMessage">
+        SELECT *
+        FROM chat_message
+        WHERE conversation_id = #{conversationId}
+          AND seq_id > #{anchorSeqId}
+        ORDER BY seq_id ASC
+        LIMIT #{limit}
+    </select>
+
+    <select id="selectMessagesOlder" resultType="com.telechat.pojo.entity.ChatMessage">
+        SELECT *
+        FROM chat_message
+        WHERE conversation_id = #{conversationId}
+          AND seq_id &lt; #{anchorSeqId}
+        ORDER BY seq_id DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="selectMessageBySeqId" resultType="com.telechat.pojo.entity.ChatMessage">
+        SELECT *
+        FROM chat_message
+        WHERE conversation_id = #{conversationId}
+          AND seq_id = #{seqId}
+        LIMIT 1
+    </select>
+
 </mapper>

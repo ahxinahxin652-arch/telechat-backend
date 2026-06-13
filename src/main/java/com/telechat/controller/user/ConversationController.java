@@ -57,9 +57,11 @@ public class ConversationController {
 
     @Operation(summary = "增量同步拉取会话列表及离线消息")
     @GetMapping("/sync")
-    public Result<ConversationSyncVO> syncConversations(@RequestParam("deviceId") String deviceId) {
+    public Result<ConversationSyncVO> syncConversations(
+            @RequestParam("deviceId") String deviceId,
+            @RequestParam(value = "clientLastSyncTime", required = false) Long clientLastSyncTime) {
         Long userId = (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
-        ConversationSyncVO syncVO = conversationService.syncConversations(userId, deviceId);
+        ConversationSyncVO syncVO = conversationService.syncConversations(userId, deviceId, clientLastSyncTime);
         return Result.success(syncVO);
     }
 

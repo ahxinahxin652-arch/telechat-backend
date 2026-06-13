@@ -69,7 +69,8 @@
                 SELECT max(seq_id)
                 FROM chat_message m
                 WHERE m.conversation_id = c.id
-            ) AS seqId,
+            ) AS lastMessageSeqId,
+            cm.last_read_message_id AS readSeqId,
             (
                 SELECT count(*)
                 FROM chat_message m

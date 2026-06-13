@@ -278,7 +278,7 @@ public class ConversationServiceImpl implements ConversationService {
     // }
 
     @Override
-    public ConversationSyncVO syncConversations(Long userId, String deviceId) {
+    public ConversationSyncVO syncConversations(Long userId, String deviceId, Long clientLastSyncTime) {
         if (userId == null || deviceId == null || deviceId.isEmpty()) {
             throw new ConversationException(ExceptionConstant.Judge_Query_Exception_Code, "参数错误或缺少deviceId");
         }
@@ -296,38 +296,22 @@ public class ConversationServiceImpl implements ConversationService {
             syncTime = deviceSync.getLastSyncTime();
         }
 
+        // 如果前端传了本地的时间戳，取两者的较大值，防止 Over-fetching
+        if (clientLastSyncTime != null && clientLastSyncTime > 0) {
+            LocalDateTime clientTime = LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(clientLastSyncTime), java.time.ZoneId.systemDefault());
+            if (clientTime.isAfter(syncTime)) {
+                syncTime = clientTime;
+            }
+        }
+
         // 1. 查询会话状态增量（包含新增好友、群聊状态变更等）
         List<ConversationVO> changedConversations = conversationDao.selectSyncConversations(userId, syncTime);
         if (changedConversations == null) {
             changedConversations = Collections.emptyList();
         }
         
-        // 提取有更新的会话 ID 列表
-        List<Long> conversationIds = changedConversations.stream()
-                .map(ConversationVO::getId)
-                .collect(Collectors.toList());
-
+        // 彻底砍掉离线消息实体拉取逻辑 (Metadata-First Lazy Load 架构)
         Map<Long, List<ChatMessage>> messagesMap = new HashMap<>();
-        
-        // 2. 查询离线期间的具体消息
-        if (!conversationIds.isEmpty()) {
-            List<ChatMessage> offlineMessages = chatMessageDao.selectMessagesAfterTime(conversationIds, syncTime);
-            if (!CollectionUtils.isEmpty(offlineMessages)) {
-                // 按会话 ID 分组
-                Map<Long, List<ChatMessage>> groupedMessages = offlineMessages.stream()
-                        .collect(Collectors.groupingBy(ChatMessage::getConversationId));
-                
-                // 执行折叠/截断策略
-                for (Map.Entry<Long, List<ChatMessage>> entry : groupedMessages.entrySet()) {
-                    List<ChatMessage> msgs = entry.getValue();
-                    if (msgs.size() > 100) {
-                        // 超过 100 条只保留最新的一条，实际未读数已经在 selectSyncConversations 中由后端统计完毕
-                        msgs = Collections.singletonList(msgs.get(msgs.size() - 1));
-                    }
-                    messagesMap.put(entry.getKey(), msgs);
-                }
-            }
-        }
 
         // 更新设备的 lastSyncTime (取当前服务器时间，防止时钟差异)
         if (deviceSync != null) {
@@ -469,7 +453,8 @@ public class ConversationServiceImpl implements ConversationService {
                 .unreadCount(0)
                 .isTop(false)
                 .isMuted(false)
-                .seqId(1L)
+                .lastMessageSeqId(1L)
+                .readSeqId(1L)
                 .lastMessageContent(MessageConstant.GROUP_CREATE_MESSAGE)
                 .lastMessageTime(now)
                 .score(score)
@@ -500,7 +485,8 @@ public class ConversationServiceImpl implements ConversationService {
                     .unreadCount(1)
                     .isTop(conversationVO.getIsTop())
                     .isMuted(conversationVO.getIsMuted())
-                    .seqId(conversationVO.getSeqId())
+                    .lastMessageSeqId(conversationVO.getLastMessageSeqId())
+                    .readSeqId(0L)
                     .lastMessageContent(conversationVO.getLastMessageContent())
                     .lastMessageTime(conversationVO.getLastMessageTime())
                     .score(conversationVO.getScore())
