@@ -119,6 +119,23 @@ public class ContactConversationEventConsumer {
             case GROUP_DISBAND -> {
 
             }
+            // 8:已读回执
+            case READ_RECEIPT -> {
+                com.telechat.websocket.message.ReadReceiptNotification wsNotification = com.telechat.websocket.message.ReadReceiptNotification.builder()
+                        .conversationId(event.getConversationVO().getId())
+                        .userId(event.getSenderId())
+                        .maxReadSeqId(Long.valueOf(event.getDescription()))
+                        .timestamp(event.getTimestamp())
+                        .build();
+
+                if (event.getAllReceiverIds() != null && !event.getAllReceiverIds().isEmpty()) {
+                    for (Long receiverId : event.getAllReceiverIds()) {
+                        messageService.sendReadReceiptNotification(receiverId, wsNotification);
+                    }
+                } else if (event.getReceiverId() != null) {
+                    messageService.sendReadReceiptNotification(event.getReceiverId(), wsNotification);
+                }
+            }
         }
 
     }

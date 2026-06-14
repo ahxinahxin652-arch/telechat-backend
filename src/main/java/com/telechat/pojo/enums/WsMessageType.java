@@ -21,7 +21,9 @@ public enum WsMessageType {
     TYPING("typing"),           // 正在输入...
     CONTACT_APPLY("contact_apply"), // 好友申请
     CONTACT_CREATE("private_create"), // 私聊创建
-    GROUP_CREATE("group_create");     // 群聊创建
+    GROUP_CREATE("group_create"),     // 群聊创建
+    READ_RECEIPT("read_receipt"),     // 已读回执
+    READ("read");                     // 已读上报信令
 
 
 

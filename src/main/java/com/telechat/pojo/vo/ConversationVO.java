@@ -36,6 +36,8 @@ public class ConversationVO {
     private Long lastMessageSeqId;
     // 当前用户本地最后已读的消息 seq_id
     private Long readSeqId;
+    // 私聊中对方最后已读的消息 seq_id (用于渲染单双钩)
+    private Long otherReadSeqId;
     // 最新消息内容（用于列表预览）
     private String lastMessageContent;
     // 最新消息时间

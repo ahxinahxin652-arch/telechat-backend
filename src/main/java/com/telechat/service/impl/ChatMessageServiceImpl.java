@@ -44,6 +44,9 @@ public class ChatMessageServiceImpl implements ChatMessageService {
     @Resource
     private com.telechat.mq.publisher.ChatMessageEventPublisher chatMessageEventPublisher;
 
+    @Resource
+    private com.telechat.mq.publisher.ContactConversationEventPublisher contactConversationEventPublisher;
+
     @Transactional(rollbackFor = Exception.class)
     @Override
     public ChatMessage sendMessage(Long senderId, Long conversationId, String content, Integer messageType) {
@@ -161,6 +164,30 @@ public class ChatMessageServiceImpl implements ChatMessageService {
         // 只有新的游标大于老游标，才进行覆盖更新，防止游标倒退
         if (seqId > currentLastRead) {
             conversationMemberDao.updateLastReadMessageId(conversationId, userId, seqId);
+
+            // 异步广播已读回执
+            try {
+                java.util.List<com.telechat.pojo.entity.ConversationMember> members = conversationMemberDao.selectMembersByConversationId(conversationId);
+                if (members != null && !members.isEmpty()) {
+                    java.util.List<Long> receiverIds = new java.util.ArrayList<>();
+                    for (com.telechat.pojo.entity.ConversationMember m : members) {
+                        receiverIds.add(m.getUserId());
+                    }
+                    if (!receiverIds.isEmpty()) {
+                        com.telechat.mq.event.ContactConversationEvent event = com.telechat.mq.event.ContactConversationEvent.builder()
+                                .contactConversationType(com.telechat.pojo.enums.mq.ContactConversationType.READ_RECEIPT)
+                                .senderId(userId)
+                                .allReceiverIds(receiverIds)
+                                .conversationVO(com.telechat.pojo.vo.ConversationVO.builder().id(conversationId).build())
+                                .description(String.valueOf(seqId))
+                                .timestamp(System.currentTimeMillis())
+                                .build();
+                        contactConversationEventPublisher.publishContactConversationEvent(event);
+                    }
+                }
+            } catch (Exception e) {
+                log.error("发布已读回执MQ事件失败", e);
+            }
         }
     }
 
@@ -168,6 +195,10 @@ public class ChatMessageServiceImpl implements ChatMessageService {
     public java.util.List<ChatMessage> getHistoryMessages(Long userId, Long conversationId, Long anchorSeqId, Integer limit, String direction) {
         if (conversationId == null || anchorSeqId == null || limit == null || limit <= 0) {
             throw new ConversationException(ExceptionConstant.Judge_Query_Exception_Code, "参数错误");
+        }
+
+        if (limit > 100) {
+            limit = 100;
         }
 
         // 校验权限
@@ -207,15 +238,6 @@ public class ChatMessageServiceImpl implements ChatMessageService {
             result = chatMessageDao.selectMessagesOlder(conversationId, anchorSeqId, limit);
             if (result != null && !result.isEmpty()) {
                 java.util.Collections.reverse(result);
-            }
-        }
-
-        // 自动推进已读游标 (Auto-Read)
-        if (result != null && !result.isEmpty() && !"older".equalsIgnoreCase(direction)) {
-            Long maxSeqId = result.stream().map(ChatMessage::getSeqId).max(Long::compareTo).orElse(0L);
-            Long currentReadSeqId = member.getLastReadMessageId() != null ? member.getLastReadMessageId() : 0L;
-            if (maxSeqId > currentReadSeqId) {
-                conversationMemberDao.updateLastReadMessageId(conversationId, userId, maxSeqId);
             }
         }
 

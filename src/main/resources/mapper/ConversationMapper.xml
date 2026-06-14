@@ -71,6 +71,12 @@
                 WHERE m.conversation_id = c.id
             ) AS lastMessageSeqId,
             cm.last_read_message_id AS readSeqId,
+            IF(c.type = 0, (
+                SELECT other_cm.last_read_message_id
+                FROM conversation_member other_cm
+                WHERE other_cm.conversation_id = c.id AND other_cm.user_id != #{userId}
+                LIMIT 1
+            ), NULL) AS otherReadSeqId,
             (
                 SELECT count(*)
                 FROM chat_message m

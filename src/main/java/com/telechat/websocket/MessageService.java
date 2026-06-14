@@ -87,5 +87,24 @@ public class MessageService {
         } catch (Exception e) {
             log.error("群聊创建通知推送失败", e);
         }
+     }
+
+    /**
+     * 发送消息已读回执通知
+     */
+    public void sendReadReceiptNotification(Long receiverId, com.telechat.websocket.message.ReadReceiptNotification notification) {
+        try {
+            WsMessage<Object> message = WsMessage.of(
+                    WsMessageType.READ_RECEIPT,
+                    notification.getConversationId(),
+                    notification.getUserId(),
+                    notification.getTimestamp(),
+                    notification
+            );
+            webSocketHandler.sendMsg(receiverId, message);
+            log.info("已读回执通知已推送给用户: {}, seqId: {}", receiverId, notification.getMaxReadSeqId());
+        } catch (Exception e) {
+            log.error("已读回执通知推送失败", e);
+        }
     }
 }

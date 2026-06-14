@@ -41,7 +41,12 @@ public enum ContactConversationType {
     /**
      * 7: 解散群聊 (GROUP_DISBAND)
      */
-    GROUP_DISBAND(7, "group_disband");
+    GROUP_DISBAND(7, "group_disband"),
+
+    /**
+     * 8: 消息已读回执 (READ_RECEIPT)
+     */
+    READ_RECEIPT(8, "read_receipt");
 
     @EnumValue   // 存入数据库的值 (0, 1, 2)
     @JsonValue   // 前端看到的 JSON 值

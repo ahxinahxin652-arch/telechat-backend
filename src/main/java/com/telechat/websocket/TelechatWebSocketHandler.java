@@ -21,8 +21,8 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 public class TelechatWebSocketHandler implements WebSocketHandler {
 
-    // 存储用户ID和对应的Session，企业级IM中如果单机支持百万连接，通常建议结合 Netty 优化，但在万级/十万级并发内 Spring WebSocket 结合 ConcurrentHashMap 足够稳定
-    private static final ConcurrentHashMap<Long, WebSocketSession> userSessions = new ConcurrentHashMap<>();
+    // 存储用户ID和对应的Session集合，支持多设备同时在线
+    private static final ConcurrentHashMap<Long, java.util.concurrent.CopyOnWriteArrayList<WebSocketSession>> userSessions = new ConcurrentHashMap<>();
 
     // 心跳超时容忍时间：90秒（前端心跳间隔45秒，允许丢失一次包，超过90秒无响应即认定掉线）
     private static final long SESSION_TIMEOUT_MS = 90_000L;
@@ -39,15 +39,18 @@ public class TelechatWebSocketHandler implements WebSocketHandler {
     @Resource
     private UserDeviceSyncService userDeviceSyncService;
 
+    @Resource
+    private com.telechat.service.ChatMessageService chatMessageService;
+
     @Override
     public void afterConnectionEstablished(@NonNull WebSocketSession session) throws Exception {
         Long userId = getUserId(session);
         if (userId != null) {
-            userSessions.put(userId, session);
+            userSessions.computeIfAbsent(userId, k -> new java.util.concurrent.CopyOnWriteArrayList<>()).add(session);
             // 初始化/更新最后活跃时间
             updateSessionActiveTime(session);
 
-            log.info("用户 [{}] 上线，当前在线人数: {}", userId, userSessions.size());
+            log.info("用户 [{}] 上线，当前在线用户数: {}", userId, userSessions.size());
 
             WsMessage<String> systemMsg = WsMessage.of(
                     WsMessageType.SYSTEM,
@@ -91,6 +94,10 @@ public class TelechatWebSocketHandler implements WebSocketHandler {
             // 3. 处理客户端发来的 ACK 确认消息
             else if (WsMessageType.ACK.getValue().equals(typeStr)) {
                 handleAckMessage(userId, rootNode);
+            }
+            // 4. 处理客户端已读上报信令
+            else if (WsMessageType.READ.getValue().equals(typeStr)) {
+                handleReadMessage(userId, rootNode);
             }
 
         } catch (Exception e) {
@@ -145,6 +152,24 @@ public class TelechatWebSocketHandler implements WebSocketHandler {
     }
 
     /**
+     * 处理客户端已读上报信令
+     */
+    private void handleReadMessage(Long userId, JsonNode rootNode) {
+        try {
+            JsonNode dataNode = rootNode.path("data");
+            if (!dataNode.isMissingNode()) {
+                long conversationId = dataNode.path("conversationId").asLong();
+                long seqId = dataNode.path("seqId").asLong();
+                if (conversationId > 0 && seqId > 0) {
+                    chatMessageService.markMessageAsRead(userId, conversationId, seqId);
+                }
+            }
+        } catch (Exception e) {
+            log.error("用户 [{}] 处理 WS 已读上报异常", userId, e);
+        }
+    }
+
+    /**
      * 【定时任务】扫描僵尸连接
      * 每 30 秒执行一次，如果发现某个 Session 超过 90 秒未交互，主动剔除并释放资源
      */
@@ -152,27 +177,31 @@ public class TelechatWebSocketHandler implements WebSocketHandler {
     public void checkZombieSessions() {
         long now = System.currentTimeMillis();
 
-        // 使用 entrySet().removeIf 进行安全的高效并发遍历剔除
         userSessions.entrySet().removeIf(entry -> {
-            Long userId = entry.getKey();
-            WebSocketSession session = entry.getValue();
-
-            if (session == null || !session.isOpen()) {
-                return true; // 连接已关，踢出 Map
+            java.util.concurrent.CopyOnWriteArrayList<WebSocketSession> sessions = entry.getValue();
+            if (sessions == null) {
+                return true;
             }
 
-            Long lastActiveTime = (Long) session.getAttributes().getOrDefault(LAST_ACTIVE_TIME_KEY, now);
-            if (now - lastActiveTime > SESSION_TIMEOUT_MS) {
-                log.warn("用户 [{}] 心跳超时(90s未响应)，强制断开僵尸连接", userId);
-                try {
-                    // 主动关闭连接，状态码 1011 (服务器异常/内部状态错误) 或 1000 (正常) 均可
-                    session.close(CloseStatus.SESSION_NOT_RELIABLE);
-                } catch (IOException e) {
-                    log.error("强制关闭用户 [{}] 连接异常", userId, e);
+            sessions.removeIf(session -> {
+                if (session == null || !session.isOpen()) {
+                    return true; // 移除已关闭的
                 }
-                return true; // 从 Map 中移除
-            }
-            return false;
+
+                Long lastActiveTime = (Long) session.getAttributes().getOrDefault(LAST_ACTIVE_TIME_KEY, now);
+                if (now - lastActiveTime > SESSION_TIMEOUT_MS) {
+                    log.warn("用户 [{}] 心跳超时(90s未响应)，强制断开僵尸连接", getUserId(session));
+                    try {
+                        session.close(CloseStatus.SESSION_NOT_RELIABLE);
+                    } catch (IOException e) {
+                        log.error("强制关闭用户连接异常", e);
+                    }
+                    return true; // 从用户Session列表中移除
+                }
+                return false;
+            });
+
+            return sessions.isEmpty(); // 如果用户所有Session都已经断连，则从用户Sessions Map中移除
         });
     }
 
@@ -205,9 +234,9 @@ public class TelechatWebSocketHandler implements WebSocketHandler {
      * 对外暴露的业务消息发送接口
      */
     public void sendMsg(Long receiverId, WsMessage<?> message) {
-        WebSocketSession session = userSessions.get(receiverId);
+        java.util.concurrent.CopyOnWriteArrayList<WebSocketSession> sessions = userSessions.get(receiverId);
 
-        if (session == null || !session.isOpen()) {
+        if (sessions == null || sessions.isEmpty()) {
             // TODO：写入 Redis 离线消息队列，或通过 APNs/华为推送 进行离线唤醒
             log.debug("用户 [{}] 离线，消息已转入离线处理队列 (待实现)", receiverId);
             return;
@@ -215,11 +244,13 @@ public class TelechatWebSocketHandler implements WebSocketHandler {
 
         try {
             String json = objectMapper.writeValueAsString(message);
-            sendMessageToSessionSafely(session, json);
+            for (WebSocketSession session : sessions) {
+                if (session.isOpen()) {
+                    sendMessageToSessionSafely(session, json);
+                }
+            }
         } catch (Exception e) {
             log.error("序列化并发送消息给用户 [{}] 失败", receiverId, e);
-            // 严重异常时尝试从缓存清理并断开
-            removeSession(session);
         }
     }
 
@@ -268,7 +299,13 @@ public class TelechatWebSocketHandler implements WebSocketHandler {
         }
         Long userId = getUserId(session);
         if (userId != null) {
-            userSessions.remove(userId);
+            java.util.concurrent.CopyOnWriteArrayList<WebSocketSession> sessions = userSessions.get(userId);
+            if (sessions != null) {
+                sessions.remove(session);
+                if (sessions.isEmpty()) {
+                    userSessions.remove(userId);
+                }
+            }
             // 这里可以触发一次强制刷盘，保证离线时游标立刻落库，避免 Redis 和 MySQL 产生窗口期差异
             try {
                 userDeviceSyncService.flushRedisCursorsToDb();
