@@ -19,6 +19,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import java.time.LocalDateTime;
 
 @Slf4j
@@ -56,6 +57,29 @@ public class ChatMessageServiceImpl implements ChatMessageService {
 
         // 2. 原子生成递增 SeqId (使用 Redis INCR)
         String seqKey = RedisConstant.CONVERSATION_SEQ_ID + conversationId;
+        Boolean hasKey = stringRedisTemplate.hasKey(seqKey);
+        if (hasKey == null || !hasKey) {
+            Long initSeqId = 0L;
+            Conversation conversation = conversationDao.selectById(conversationId);
+            if (conversation != null && conversation.getLastMessageId() != null) {
+                ChatMessage lastMessage = chatMessageDao.getById(conversation.getLastMessageId());
+                if (lastMessage != null && lastMessage.getSeqId() != null) {
+                    initSeqId = lastMessage.getSeqId();
+                }
+            }
+            if (initSeqId == 0L) {
+                LambdaQueryWrapper<ChatMessage> wrapper = new LambdaQueryWrapper<ChatMessage>()
+                        .eq(ChatMessage::getConversationId, conversationId)
+                        .orderByDesc(ChatMessage::getSeqId)
+                        .last("limit 1");
+                ChatMessage lastMsgByQuery = chatMessageDao.getOne(wrapper);
+                if (lastMsgByQuery != null && lastMsgByQuery.getSeqId() != null) {
+                    initSeqId = lastMsgByQuery.getSeqId();
+                }
+            }
+            stringRedisTemplate.opsForValue().setIfAbsent(seqKey, String.valueOf(initSeqId));
+        }
+
         Long seqId = stringRedisTemplate.opsForValue().increment(seqKey);
         if (seqId == null) {
             throw new ConversationException(ExceptionConstant.Judge_Query_Exception_Code, "序列号生成失败");
