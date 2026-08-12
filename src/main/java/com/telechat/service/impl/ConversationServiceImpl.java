@@ -290,18 +290,18 @@ public class ConversationServiceImpl implements ConversationService {
                         .eq(com.telechat.pojo.entity.UserDeviceSync::getDeviceId, deviceId));
 
         LocalDateTime syncTime;
-        if (deviceSync == null || deviceSync.getLastSyncTime() == null) {
+        // 如果客户端传 clientLastSyncTime == 0 (或 null)，说明客户端本地无缓存 (新设备/已清除缓存)
+        // 此时必须强制全量同步 (syncTime 设为 1970年)，忽略 DB 记录的该设备历史同步时间！
+        if (clientLastSyncTime == null || clientLastSyncTime <= 0) {
             syncTime = LocalDateTime.ofEpochSecond(0, 0, ZoneOffset.UTC);
         } else {
-            syncTime = deviceSync.getLastSyncTime();
-        }
-
-        // 如果前端传了本地的时间戳，取两者的较大值，防止 Over-fetching
-        if (clientLastSyncTime != null && clientLastSyncTime > 0) {
+            // 客户端有本地缓存，取 DB 记录与客户端记录的【较小者】(更早的时间)，确保不漏掉离线变更
+            LocalDateTime dbSyncTime = (deviceSync != null && deviceSync.getLastSyncTime() != null)
+                    ? deviceSync.getLastSyncTime()
+                    : LocalDateTime.ofEpochSecond(0, 0, ZoneOffset.UTC);
             LocalDateTime clientTime = LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(clientLastSyncTime), java.time.ZoneId.systemDefault());
-            if (clientTime.isAfter(syncTime)) {
-                syncTime = clientTime;
-            }
+
+            syncTime = dbSyncTime.isBefore(clientTime) ? dbSyncTime : clientTime;
         }
 
         // 1. 查询会话状态增量（包含新增好友、群聊状态变更等）
